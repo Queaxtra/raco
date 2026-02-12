@@ -1,0 +1,30 @@
+AGENTS.md
+.env
+.DS_Store
+raco
+
+# GoReleaser
+dist/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.temp
