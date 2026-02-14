@@ -54,8 +54,12 @@ type PanelInputs struct {
 	HeaderKeyInput   textinput.Model
 	HeaderValueInput textinput.Model
 	BodyInput        textarea.Model
+	FilePathInput    textinput.Model
+	FileFieldInput   textinput.Model
 	HeaderKeys       []string
 	SelectedHeader   int
+	FileKeys         []string
+	SelectedFile     int
 }
 
 func Panel(width, height int, isActive bool, headers map[string]string, inputs PanelInputs) string {
@@ -138,6 +142,51 @@ func Panel(width, height int, isActive bool, headers map[string]string, inputs P
 	content.WriteString(headerInputLine)
 	content.WriteString("\n")
 
+	fileTitle := "Files"
+	if len(inputs.FileKeys) > 0 {
+		fileTitle = fmt.Sprintf("Files (%d)", len(inputs.FileKeys))
+	}
+	content.WriteString(panelSectionStyle.Render(panelLabelStyle.Render(fileTitle)))
+	content.WriteString("\n")
+
+	if len(inputs.FileKeys) == 0 {
+		emptyMsg := lipgloss.NewStyle().
+			Foreground(panelHelpColor).
+			Italic(true).
+			PaddingLeft(2).
+			Render("No files (Ctrl+F to add)")
+		content.WriteString(emptyMsg)
+	}
+
+	fileSelectedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("212")).
+		Background(lipgloss.Color("236")).
+		PaddingLeft(2)
+
+	for i, key := range inputs.FileKeys {
+		fileLine := key
+		if i == inputs.SelectedFile {
+			content.WriteString(fileSelectedStyle.Render("▸ " + fileLine))
+		}
+		if i != inputs.SelectedFile {
+			content.WriteString(panelHeaderItemStyle.Render("  " + fileLine))
+		}
+		content.WriteString("\n")
+	}
+
+	content.WriteString("\n")
+	content.WriteString(panelLabelStyle.Render("Add File"))
+	content.WriteString("\n")
+
+	fileInputLine := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		inputs.FileFieldInput.View(),
+		lipgloss.NewStyle().Foreground(panelLabelColor).Render(" = "),
+		inputs.FilePathInput.View(),
+	)
+	content.WriteString(fileInputLine)
+	content.WriteString("\n")
+
 	content.WriteString(panelSectionStyle.Render(panelLabelStyle.Render("Body")))
 	content.WriteString("\n")
 	content.WriteString(inputs.BodyInput.View())
@@ -153,14 +202,5 @@ func Panel(width, height int, isActive bool, headers map[string]string, inputs P
 }
 
 func GetPanelHelp() string {
-	helps := []string{
-		"Tab: Next Field",
-		"Ctrl+R: Execute",
-		"Ctrl+W: Save",
-		"Ctrl+S: Add Header",
-		"Ctrl+D: Delete Header",
-		"F1: Dashboard",
-		"Ctrl+Q: Disconnect",
-	}
-	return strings.Join(helps, " • ")
+	return "Tab: Next • Ctrl+R: Send • Ctrl+W: Save • Ctrl+S: +Header • Ctrl+D: -Header • Ctrl+F: +File • Ctrl+X: -File • Esc: Back"
 }

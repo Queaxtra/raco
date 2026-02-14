@@ -12,6 +12,7 @@ type HistoryEntry struct {
 	URL       string            `json:"url" yaml:"url"`
 	Headers   map[string]string `json:"headers" yaml:"headers"`
 	Body      string            `json:"body" yaml:"body"`
+	Files     []FileUpload      `json:"files,omitempty" yaml:"files,omitempty"`
 	Protocol  string            `json:"protocol" yaml:"protocol"`
 	Timestamp time.Time         `json:"timestamp" yaml:"timestamp"`
 }
@@ -22,8 +23,8 @@ func generateHistoryID() string {
 	return hex.EncodeToString(b)
 }
 
-func NewHistoryEntry(method, url string, headers map[string]string, body, protocol string) *HistoryEntry {
-	return &HistoryEntry{
+func NewHistoryEntry(method, url string, headers map[string]string, body, protocol string, files ...[]FileUpload) *HistoryEntry {
+	entry := &HistoryEntry{
 		ID:        generateHistoryID(),
 		Method:    method,
 		URL:       url,
@@ -32,4 +33,8 @@ func NewHistoryEntry(method, url string, headers map[string]string, body, protoc
 		Protocol:  protocol,
 		Timestamp: time.Now(),
 	}
+	if len(files) > 0 {
+		entry.Files = files[0]
+	}
+	return entry
 }

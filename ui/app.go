@@ -39,6 +39,8 @@ const (
 	inputURL
 	inputHeaderKey
 	inputHeaderValue
+	inputFileField
+	inputFilePath
 	inputBody
 )
 
@@ -62,6 +64,11 @@ type Model struct {
 	urlInput         textinput.Model
 	headerKeyInput   textinput.Model
 	headerValueInput textinput.Model
+	fileFieldInput   textinput.Model
+	filePathInput    textinput.Model
+	files            map[string]model.FileUpload
+	fileKeys         []string
+	selectedFile     int
 	bodyInput        textarea.Model
 	responseViewport viewport.Model
 	notification     notification.State
@@ -103,9 +110,18 @@ func NewModel(storagePath string) Model {
 	headerValueInput.Width = 40
 
 	bodyInput := textarea.New()
-	bodyInput.Placeholder = "Request body (JSON, XML, etc.)"
+	bodyInput.Placeholder = "Request body (JSON, XML, form-data)"
 	bodyInput.SetWidth(80)
 	bodyInput.SetHeight(6)
+
+	fileFieldInput := textinput.New()
+	fileFieldInput.Placeholder = "field_name"
+	fileFieldInput.Width = 20
+
+	filePathInput := textinput.New()
+	filePathInput.Placeholder = "/path/to/file"
+	filePathInput.Width = 50
+
 	responseViewport := viewport.New(80, 20)
 
 	collectionInput := textinput.New()
@@ -137,6 +153,11 @@ func NewModel(storagePath string) Model {
 		urlInput:         urlInput,
 		headerKeyInput:   headerKeyInput,
 		headerValueInput: headerValueInput,
+		fileFieldInput:   fileFieldInput,
+		filePathInput:    filePathInput,
+		files:            make(map[string]model.FileUpload),
+		fileKeys:         make([]string, 0),
+		selectedFile:     -1,
 		bodyInput:        bodyInput,
 		responseViewport: responseViewport,
 		notification:     notification.New(),
@@ -354,8 +375,12 @@ func (m *Model) View() string {
 			HeaderKeyInput:   m.headerKeyInput,
 			HeaderValueInput: m.headerValueInput,
 			BodyInput:        m.bodyInput,
+			FilePathInput:    m.filePathInput,
+			FileFieldInput:   m.fileFieldInput,
 			HeaderKeys:       m.headerKeys,
 			SelectedHeader:   m.selectedHeader,
+			FileKeys:         m.fileKeys,
+			SelectedFile:     m.selectedFile,
 		}
 		mainView = render.Panel(mainWidth, contentHeight, m.mode == viewPanel, m.headers, panelInputs)
 	}
@@ -403,7 +428,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.mode == viewPanel && m.isInputFocused() {
 		key := msg.String()
-		if key == "ctrl+c" || key == "tab" || key == "esc" || key == "ctrl+r" || key == "ctrl+s" || key == "ctrl+d" {
+		if key == "ctrl+c" || key == "tab" || key == "esc" || key == "ctrl+r" || key == "ctrl+s" || key == "ctrl+d" || key == "ctrl+f" || key == "ctrl+x" {
 			return m.handleGlobalKeys(msg)
 		}
 		if m.focusedInput == inputMethod {
@@ -456,6 +481,12 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+d":
 		return m.handleHeaderDelete()
 
+	case "ctrl+f":
+		return m.handleFileAdd()
+
+	case "ctrl+x":
+		return m.handleFileDelete()
+
 	case "ctrl+n":
 		m.showCreateCollection = true
 		m.collectionInput.Focus()
@@ -505,7 +536,7 @@ func (m *Model) handleTabNavigation() *Model {
 			return m
 		}
 		m.unfocusAllInputs()
-		m.focusedInput = (m.focusedInput + 1) % 5
+		m.focusedInput = (m.focusedInput + 1) % 7
 		m.focusInput(m.focusedInput)
 		return m
 	}
@@ -537,9 +568,17 @@ func (m *Model) handleDownNavigation() *Model {
 		return m
 	}
 
-	if m.mode == viewPanel && !m.isInputFocused() && len(m.headerKeys) > 0 {
-		if m.selectedHeader < len(m.headerKeys)-1 {
-			m.selectedHeader++
+	if m.mode == viewPanel && !m.isInputFocused() {
+		if len(m.headerKeys) > 0 {
+			if m.selectedHeader < len(m.headerKeys)-1 {
+				m.selectedHeader++
+				return m
+			}
+		}
+		if len(m.fileKeys) > 0 {
+			if m.selectedFile < len(m.fileKeys)-1 {
+				m.selectedFile++
+			}
 		}
 	}
 	return m
@@ -553,9 +592,17 @@ func (m *Model) handleUpNavigation() *Model {
 		return m
 	}
 
-	if m.mode == viewPanel && !m.isInputFocused() && len(m.headerKeys) > 0 {
-		if m.selectedHeader > 0 {
-			m.selectedHeader--
+	if m.mode == viewPanel && !m.isInputFocused() {
+		if len(m.fileKeys) > 0 {
+			if m.selectedFile > 0 {
+				m.selectedFile--
+				return m
+			}
+		}
+		if len(m.headerKeys) > 0 {
+			if m.selectedHeader > 0 {
+				m.selectedHeader--
+			}
 		}
 	}
 	return m
@@ -618,7 +665,69 @@ func (m *Model) handleHeaderDelete() (*Model, tea.Cmd) {
 	return m, notification.ShowCmd("Header deleted: " + key)
 }
 
+func (m *Model) handleFileAdd() (*Model, tea.Cmd) {
+	if m.mode != viewPanel {
+		return m, nil
+	}
 
+	field := m.fileFieldInput.Value()
+	path := m.filePathInput.Value()
+
+	if field == "" {
+		return m, notification.ShowCmd("Field name required")
+	}
+
+	if path == "" {
+		return m, notification.ShowCmd("File path required")
+	}
+
+	file := model.FileUpload{
+		FieldName: field,
+		FilePath:  path,
+	}
+
+	if err := file.Validate(); err != nil {
+		return m, notification.ShowCmd("Invalid file: " + err.Error())
+	}
+
+	key := field + " = " + file.FileName
+	m.files[key] = file
+	m.fileKeys = append(m.fileKeys, key)
+	m.selectedFile = len(m.fileKeys) - 1
+
+	m.fileFieldInput.SetValue("")
+	m.filePathInput.SetValue("")
+
+	return m, notification.ShowCmd("File added: " + file.FileName)
+}
+
+func (m *Model) handleFileDelete() (*Model, tea.Cmd) {
+	if m.mode != viewPanel {
+		return m, nil
+	}
+
+	if len(m.fileKeys) == 0 || m.selectedFile < 0 || m.selectedFile >= len(m.fileKeys) {
+		return m, notification.ShowCmd("No file selected")
+	}
+
+	key := m.fileKeys[m.selectedFile]
+	file := m.files[key]
+	delete(m.files, key)
+
+	newKeys := make([]string, 0, len(m.fileKeys)-1)
+	for i, k := range m.fileKeys {
+		if i != m.selectedFile {
+			newKeys = append(newKeys, k)
+		}
+	}
+	m.fileKeys = newKeys
+
+	if m.selectedFile >= len(m.fileKeys) {
+		m.selectedFile = len(m.fileKeys) - 1
+	}
+
+	return m, notification.ShowCmd("File removed: " + file.FileName)
+}
 
 func (m *Model) handleSidebarSelection() {
 	currentIdx := 0
@@ -688,6 +797,17 @@ func (m *Model) loadRequest(req *model.Request) {
 	if len(m.headerKeys) > 0 {
 		m.selectedHeader = 0
 	}
+	m.files = make(map[string]model.FileUpload)
+	m.fileKeys = make([]string, 0)
+	for _, file := range req.Files {
+		key := file.FieldName + " = " + file.FileName
+		m.files[key] = file
+		m.fileKeys = append(m.fileKeys, key)
+	}
+	m.selectedFile = -1
+	if len(m.fileKeys) > 0 {
+		m.selectedFile = 0
+	}
 	m.bodyInput.SetValue(req.Body)
 }
 
@@ -728,10 +848,17 @@ func (m *Model) executeCurrentRequest() tea.Cmd {
 		URL:        url,
 		Headers:    m.headers,
 		Body:       bodyContent,
+		Files:      make([]model.FileUpload, 0),
 		Assertions: make([]model.Assertion, 0),
 		Extractors: make([]model.Extractor, 0),
 	}
-	
+
+	for _, key := range m.fileKeys {
+		if file, ok := m.files[key]; ok {
+			req.Files = append(req.Files, file)
+		}
+	}
+
 	if m.currentRequest != nil {
 		req.Assertions = m.currentRequest.Assertions
 		req.Extractors = m.currentRequest.Extractors
@@ -907,6 +1034,10 @@ func (m *Model) focusInput(field inputField) {
 		m.headerKeyInput.Focus()
 	case inputHeaderValue:
 		m.headerValueInput.Focus()
+	case inputFileField:
+		m.fileFieldInput.Focus()
+	case inputFilePath:
+		m.filePathInput.Focus()
 	}
 }
 
@@ -916,6 +1047,8 @@ func (m *Model) unfocusAllInputs() {
 	m.bodyInput.Blur()
 	m.headerKeyInput.Blur()
 	m.headerValueInput.Blur()
+	m.fileFieldInput.Blur()
+	m.filePathInput.Blur()
 }
 
 func (m *Model) updateInputs(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -936,6 +1069,12 @@ func (m *Model) updateInputs(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case inputHeaderValue:
 		m.headerValueInput, cmd = m.headerValueInput.Update(msg)
+		return m, cmd
+	case inputFileField:
+		m.fileFieldInput, cmd = m.fileFieldInput.Update(msg)
+		return m, cmd
+	case inputFilePath:
+		m.filePathInput, cmd = m.filePathInput.Update(msg)
 		return m, cmd
 	}
 
@@ -1026,6 +1165,7 @@ func (m *Model) saveRequestToCollection(name string) (*Model, tea.Cmd) {
 		URL:        m.urlInput.Value(),
 		Headers:    make(map[string]string),
 		Body:       m.bodyInput.Value(),
+		Files:      make([]model.FileUpload, 0),
 		Assertions: make([]model.Assertion, 0),
 		Extractors: make([]model.Extractor, 0),
 	}
@@ -1033,7 +1173,13 @@ func (m *Model) saveRequestToCollection(name string) (*Model, tea.Cmd) {
 	for k, v := range m.headers {
 		req.Headers[k] = v
 	}
-	
+
+	for _, key := range m.fileKeys {
+		if file, ok := m.files[key]; ok {
+			req.Files = append(req.Files, file)
+		}
+	}
+
 	if m.currentRequest != nil {
 		req.Assertions = m.currentRequest.Assertions
 		req.Extractors = m.currentRequest.Extractors
@@ -1204,12 +1350,19 @@ func (m *Model) addHistoryEntryWithProtocol(protocol string) {
 		headersCopy[k] = v
 	}
 
+	filesCopy := make([]model.FileUpload, 0)
+	for _, key := range m.fileKeys {
+		if file, ok := m.files[key]; ok {
+			filesCopy = append(filesCopy, file)
+		}
+	}
+
 	proto := protocol
 	if proto == "" {
 		proto = "HTTP"
 	}
 
-	entry := model.NewHistoryEntry(method, url, headersCopy, body, proto)
+	entry := model.NewHistoryEntry(method, url, headersCopy, body, proto, filesCopy)
 	m.history = append(m.history, entry)
 
 	maxHistory := 100
@@ -1230,6 +1383,17 @@ func (m *Model) loadHistoryEntry(entry *model.HistoryEntry) {
 	m.selectedHeader = -1
 	if len(m.headerKeys) > 0 {
 		m.selectedHeader = 0
+	}
+	m.files = make(map[string]model.FileUpload)
+	m.fileKeys = make([]string, 0)
+	for _, file := range entry.Files {
+		key := file.FieldName + " = " + file.FileName
+		m.files[key] = file
+		m.fileKeys = append(m.fileKeys, key)
+	}
+	m.selectedFile = -1
+	if len(m.fileKeys) > 0 {
+		m.selectedFile = 0
 	}
 	m.bodyInput.SetValue(entry.Body)
 }

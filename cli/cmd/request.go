@@ -15,6 +15,7 @@ type requestConfig struct {
 	URL         string
 	Headers     map[string]string
 	Body        string
+	Files       []model.FileUpload
 	Output      string
 	Environment string
 }
@@ -31,6 +32,7 @@ func RunRequest(ctx *Context, args []string) int {
 		URL:     cfg.URL,
 		Headers: cfg.Headers,
 		Body:    cfg.Body,
+		Files:   cfg.Files,
 	}
 
 	if cfg.Environment != "" {
@@ -61,6 +63,7 @@ func parseRequestArgs(args []string) (*requestConfig, error) {
 	url := fs.String("r", "", "Request URL")
 	body := fs.String("d", "", "Request body")
 	headers := fs.String("H", "", "Headers (format: Key:Value, multiple separated by ;)")
+	file := fs.String("f", "", "File upload (format: field_name:file_path)")
 	outputFmt := fs.String("o", "body", "Output format: body, json, full")
 	env := fs.String("e", "", "Environment name")
 
@@ -76,6 +79,7 @@ func parseRequestArgs(args []string) (*requestConfig, error) {
 		Method:      *method,
 		URL:         *url,
 		Body:        *body,
+		Files:       make([]model.FileUpload, 0),
 		Headers:     make(map[string]string),
 		Output:      *outputFmt,
 		Environment: *env,
@@ -88,6 +92,20 @@ func parseRequestArgs(args []string) (*requestConfig, error) {
 			if len(parts) == 2 {
 				cfg.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 			}
+		}
+	}
+
+	if *file != "" {
+		fileParts := strings.SplitN(*file, ":", 2)
+		if len(fileParts) == 2 {
+			fileUpload := model.FileUpload{
+				FieldName: strings.TrimSpace(fileParts[0]),
+				FilePath:  strings.TrimSpace(fileParts[1]),
+			}
+			if err := fileUpload.Validate(); err != nil {
+				return nil, fmt.Errorf("invalid file: %w", err)
+			}
+			cfg.Files = append(cfg.Files, fileUpload)
 		}
 	}
 

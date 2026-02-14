@@ -23,13 +23,15 @@ func StatusBar(width int) string {
 		key  string
 		desc string
 	}{
-		{"Ctrl+N", "New Collection"},
-		{"Ctrl+W", "Save Request"},
-		{"Ctrl+R", "Send Request"},
+		{"Ctrl+N", "New Coll."},
+		{"Ctrl+W", "Save Req."},
+		{"Ctrl+R", "Send"},
 		{"F1", "Dashboard"},
 		{"Ctrl+P", "Palette"},
-		{"Tab", "Switch Panel"},
-		{"Esc", "Back/Cancel"},
+		{"Tab", "Switch"},
+		{"Ctrl+F", "Add File"},
+		{"Ctrl+X", "Del File"},
+		{"Esc", "Back"},
 		{"Ctrl+C", "Quit"},
 	}
 
@@ -39,13 +41,13 @@ func StatusBar(width int) string {
 		items = append(items, key+" "+s.desc)
 	}
 
-	separator := statusBarSeparatorStyle.Render(" | ")
+	separator := statusBarSeparatorStyle.Render(" ")
 	content := lipgloss.JoinHorizontal(lipgloss.Left, items[0])
 	for i := 1; i < len(items); i++ {
 		content += separator + items[i]
 	}
 
 	return statusBarStyle.
-		Width(width).
+		Width(width - 2).
 		Render(content)
 }

@@ -8,6 +8,7 @@ High-performance terminal-based HTTP client
 
 - 3-panel terminal UI (Sidebar, Request Panel, Response Panel)
 - HTTP, WebSocket, and gRPC support
+- File Upload/Download (multipart/form-data)
 - Mouse & keyboard support
 - Clipboard integration (Drag-to-select and auto-copy)
 - Git-friendly storage (JSON/YAML)
@@ -73,6 +74,8 @@ sudo mv raco /usr/local/bin/
 - `Ctrl+R` - Send request / Connect stream
 - `Ctrl+S` - Add header
 - `Ctrl+D` - Delete header
+- `Ctrl+F` - Add file for upload
+- `Ctrl+X` - Remove file from upload
 
 **Response Panel**
 - `j/k` - Scroll content

@@ -80,6 +80,7 @@ Commands:
 Examples:
   raco req -m GET -r https://api.example.org
   raco req -m POST -r https://api.example.org -d '{"key":"value"}'
+  raco req -m POST -r https://api.example.org/upload -f file:/path/to/file.pdf
   raco ws -r wss://echo.websocket.org
   raco grpc -r localhost:50051
   raco col list

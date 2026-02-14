@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"raco/model"
 	"raco/util"
 	"strings"
@@ -148,7 +151,18 @@ func (c *Client) Execute(req *model.Request) (*model.Response, error) {
 
 func (c *Client) buildRequest(req *model.Request) (*http.Request, error) {
 	var bodyReader io.Reader
-	if req.Body != "" {
+	var contentType string
+
+	if len(req.Files) > 0 {
+		body, ct, err := buildMultipartBody(req)
+		if err != nil {
+			return nil, err
+		}
+		bodyReader = body
+		contentType = ct
+	}
+
+	if req.Body != "" && len(req.Files) == 0 {
 		bodyReader = bytes.NewBufferString(req.Body)
 	}
 
@@ -161,7 +175,97 @@ func (c *Client) buildRequest(req *model.Request) (*http.Request, error) {
 		httpReq.Header.Set(key, value)
 	}
 
+	if contentType != "" {
+		httpReq.Header.Set("Content-Type", contentType)
+	}
+
 	return httpReq, nil
+}
+
+func buildMultipartBody(req *model.Request) (io.Reader, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for _, file := range req.Files {
+		if err := file.Validate(); err != nil {
+			writer.Close()
+			return nil, "", err
+		}
+
+		fileData, err := file.ReadData()
+		if err != nil {
+			writer.Close()
+			return nil, "", err
+		}
+
+		part, err := writer.CreateFormFile(file.FieldName, file.FileName)
+		if err != nil {
+			writer.Close()
+			return nil, "", err
+		}
+
+		if _, err := part.Write(fileData); err != nil {
+			writer.Close()
+			return nil, "", err
+		}
+	}
+
+	if req.Body != "" {
+		bodyMap := make(map[string]string)
+		pairs := strings.Split(req.Body, "&")
+		for _, pair := range pairs {
+			parts := strings.SplitN(pair, "=", 2)
+			if len(parts) == 2 {
+				bodyMap[parts[0]] = parts[1]
+			}
+		}
+		for key, value := range bodyMap {
+			if err := writer.WriteField(key, value); err != nil {
+				writer.Close()
+				return nil, "", err
+			}
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+
+	return &buf, writer.FormDataContentType(), nil
+}
+
+func SaveDownloadedFile(resp *model.Response, downloadPath string) (*model.FileDownload, error) {
+	dir := filepath.Dir(downloadPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+
+	file, err := os.Create(downloadPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(resp.Body); err != nil {
+		return nil, err
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	contentType := resp.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	return &model.FileDownload{
+		FilePath:     downloadPath,
+		OriginalName: filepath.Base(downloadPath),
+		ContentType:  contentType,
+		Size:         info.Size(),
+	}, nil
 }
 
 func ReplaceEnvVars(input string, env *model.Environment) string {

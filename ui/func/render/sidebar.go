@@ -210,7 +210,7 @@ func GetMethodIcon(method string) string {
 
 func GetSidebarHelp(isActive bool) string {
 	if isActive {
-		return "j/k: Navigate • Enter: Expand/Load • Ctrl+N: New • Ctrl+P: Palette • F1: Dashboard"
+		return "j/k: Navigate • Enter: Expand/Load • Ctrl+N: New Coll • Ctrl+W: Save Req • Ctrl+R: Send • F1: Dashboard • Ctrl+P: Palette"
 	}
 	return "Tab: Focus Sidebar"
 }
