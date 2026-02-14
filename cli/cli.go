@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"raco/cli/cmd"
+	"raco/cli/version"
 )
 
 func Run(args []string) int {
@@ -49,7 +50,7 @@ func Run(args []string) int {
 		printUsage()
 		return 0
 	case "version", "-v", "--version":
-		fmt.Println("raco v1.0.0")
+		fmt.Println(version.String())
 		return 0
 	default:
 		if len(args) > 0 && (args[0] == "-r" || args[0] == "-m") {
