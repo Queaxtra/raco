@@ -12,12 +12,15 @@ type DimensionInputs struct {
 	ResponseViewport *viewport.Model
 }
 
-func Dimensions(width, height int, inputs DimensionInputs) {
-	sidebarWidth := width / 4
-	if sidebarWidth < 30 {
-		sidebarWidth = 30
+func Dimensions(width, height int, sidebarVisible bool, inputs DimensionInputs) {
+	mainWidth := width
+	if sidebarVisible {
+		sidebarWidth := width / 4
+		if sidebarWidth < 30 {
+			sidebarWidth = 30
+		}
+		mainWidth = width - sidebarWidth
 	}
-	mainWidth := width - sidebarWidth
 
 	inputs.URLInput.Width = mainWidth - 30
 	inputs.BodyInput.SetWidth(mainWidth - 8)

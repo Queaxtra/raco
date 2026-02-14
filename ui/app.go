@@ -88,6 +88,7 @@ type Model struct {
 	assertionResults    []model.AssertionResult
 	history            []*model.HistoryEntry
 	historyExpanded    bool
+	sidebarVisible     bool
 }
 
 func NewModel(storagePath string) Model {
@@ -178,6 +179,7 @@ func NewModel(storagePath string) Model {
 		assertionResults:    make([]model.AssertionResult, 0),
 		history:            make([]*model.HistoryEntry, 0),
 		historyExpanded:    true,
+		sidebarVisible:     true,
 	}
 }
 
@@ -301,16 +303,23 @@ func (m *Model) View() string {
 			Render("Initializing raco...")
 	}
 
-	sidebarWidth := m.width / 4
-	if sidebarWidth < 30 {
-		sidebarWidth = 30
+	sidebarWidth := 0
+	mainWidth := m.width
+	if m.sidebarVisible {
+		sidebarWidth = m.width / 4
+		if sidebarWidth < 30 {
+			sidebarWidth = 30
+		}
+		mainWidth = m.width - sidebarWidth
 	}
-	mainWidth := m.width - sidebarWidth
 
 	statusBar := render.StatusBar(m.width)
 	contentHeight := m.height - 2
 
-	sidebarView := render.Sidebar(sidebarWidth, contentHeight, m.mode == viewSidebar, m.collections, m.selectedIndex, m.expandedIndex, m.history, m.historyExpanded)
+	var sidebarView string
+	if m.sidebarVisible {
+		sidebarView = render.Sidebar(sidebarWidth, contentHeight, m.mode == viewSidebar, m.collections, m.selectedIndex, m.expandedIndex, m.history, m.historyExpanded)
+	}
 	
 	var mainView string
 	
@@ -406,7 +415,7 @@ func (m *Model) updateDimensions() {
 		BodyInput:        &m.bodyInput,
 		ResponseViewport: &m.responseViewport,
 	}
-	helper.Dimensions(m.width, m.height, inputs)
+	helper.Dimensions(m.width, m.height, m.sidebarVisible, inputs)
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -526,6 +535,11 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f1":
 		m.mode = viewDashboard
 		return m, nil
+
+	case "ctrl+b":
+		m.sidebarVisible = !m.sidebarVisible
+		m.updateDimensions()
+		return m, nil
 	}
 
 	return m, nil
@@ -537,6 +551,10 @@ func (m *Model) handleTabNavigation() *Model {
 		m.focusedInput = inputMethod
 		m.unfocusAllInputs()
 		m.focusInput(m.focusedInput)
+		return m
+	}
+
+	if !m.sidebarVisible && m.mode == viewPanel {
 		return m
 	}
 

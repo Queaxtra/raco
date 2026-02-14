@@ -23,6 +23,7 @@ func StatusBar(width int) string {
 		key  string
 		desc string
 	}{
+		{"Ctrl+B", "Toggle Sidebar"},
 		{"Ctrl+N", "New Coll."},
 		{"Ctrl+W", "Save Req."},
 		{"Ctrl+R", "Send"},
