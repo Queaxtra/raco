@@ -428,12 +428,30 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.mode == viewPanel && m.isInputFocused() {
 		key := msg.String()
-		if key == "ctrl+c" || key == "tab" || key == "esc" || key == "ctrl+r" || key == "ctrl+s" || key == "ctrl+d" || key == "ctrl+f" || key == "ctrl+x" {
+
+		// intercept ctrl+f before it reaches file inputs
+		// bubbles textinput treats ctrl+f as "find" which can clear the buffer
+		if key == "ctrl+f" {
+			if m.focusedInput == inputFileField || m.focusedInput == inputFilePath {
+				// capture values directly from current model state
+				// do not pass ctrl+f to textinput to avoid buffer corruption
+				return m.handleFileAddFromCurrentState()
+			}
+			return m.handleFileAdd()
+		}
+
+		if key == "ctrl+x" {
+			return m.handleFileDelete()
+		}
+
+		if key == "ctrl+c" || key == "tab" || key == "esc" || key == "ctrl+r" || key == "ctrl+s" || key == "ctrl+d" {
 			return m.handleGlobalKeys(msg)
 		}
+
 		if m.focusedInput == inputMethod {
 			return m.handleMethodInput(msg)
 		}
+
 		return m.updateInputs(msg)
 	}
 
@@ -480,12 +498,6 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+d":
 		return m.handleHeaderDelete()
-
-	case "ctrl+f":
-		return m.handleFileAdd()
-
-	case "ctrl+x":
-		return m.handleFileDelete()
 
 	case "ctrl+n":
 		m.showCreateCollection = true
@@ -666,10 +678,13 @@ func (m *Model) handleHeaderDelete() (*Model, tea.Cmd) {
 }
 
 func (m *Model) handleFileAdd() (*Model, tea.Cmd) {
-	if m.mode != viewPanel {
-		return m, nil
-	}
+	return m.handleFileAddWithCmd(nil)
+}
 
+// captures file input values directly from model state
+// used when ctrl+f is pressed while file inputs are focused
+// avoids passing ctrl+f to textinput which treats it as "find" command
+func (m *Model) handleFileAddFromCurrentState() (*Model, tea.Cmd) {
 	field := m.fileFieldInput.Value()
 	path := m.filePathInput.Value()
 
@@ -701,13 +716,53 @@ func (m *Model) handleFileAdd() (*Model, tea.Cmd) {
 	return m, notification.ShowCmd("File added: " + file.FileName)
 }
 
-func (m *Model) handleFileDelete() (*Model, tea.Cmd) {
+func (m *Model) handleFileAddWithCmd(cmd tea.Cmd) (*Model, tea.Cmd) {
 	if m.mode != viewPanel {
-		return m, nil
+		return m, cmd
+	}
+
+	field := m.fileFieldInput.Value()
+	path := m.filePathInput.Value()
+
+	if field == "" {
+		return m, tea.Batch(cmd, notification.ShowCmd("Field name required"))
+	}
+
+	if path == "" {
+		return m, tea.Batch(cmd, notification.ShowCmd("File path required"))
+	}
+
+	file := model.FileUpload{
+		FieldName: field,
+		FilePath:  path,
+	}
+
+	if err := file.Validate(); err != nil {
+		return m, tea.Batch(cmd, notification.ShowCmd("Invalid file: "+err.Error()))
+	}
+
+	key := field + " = " + file.FileName
+	m.files[key] = file
+	m.fileKeys = append(m.fileKeys, key)
+	m.selectedFile = len(m.fileKeys) - 1
+
+	m.fileFieldInput.SetValue("")
+	m.filePathInput.SetValue("")
+
+	return m, tea.Batch(cmd, notification.ShowCmd("File added: "+file.FileName))
+}
+
+func (m *Model) handleFileDelete() (*Model, tea.Cmd) {
+	return m.handleFileDeleteWithCmd(nil)
+}
+
+func (m *Model) handleFileDeleteWithCmd(cmd tea.Cmd) (*Model, tea.Cmd) {
+	if m.mode != viewPanel {
+		return m, cmd
 	}
 
 	if len(m.fileKeys) == 0 || m.selectedFile < 0 || m.selectedFile >= len(m.fileKeys) {
-		return m, notification.ShowCmd("No file selected")
+		return m, tea.Batch(cmd, notification.ShowCmd("No file selected"))
 	}
 
 	key := m.fileKeys[m.selectedFile]
@@ -726,7 +781,7 @@ func (m *Model) handleFileDelete() (*Model, tea.Cmd) {
 		m.selectedFile = len(m.fileKeys) - 1
 	}
 
-	return m, notification.ShowCmd("File removed: " + file.FileName)
+	return m, tea.Batch(cmd, notification.ShowCmd("File removed: "+file.FileName))
 }
 
 func (m *Model) handleSidebarSelection() {
@@ -1005,7 +1060,45 @@ func (m *Model) handleMouseEvent(msg tea.MouseMsg) (*Model, tea.Cmd) {
 		return m, nil
 	}
 
-	bodyStartY := headerInputY + 3
+	// Files section Y coordinate calculation
+	// Files header is at headerInputY + 1
+	// Files list starts at headerInputY + 2
+	filesHeaderY := headerInputY + 1
+	filesListStartY := filesHeaderY + 1
+
+	// File list selection (click on existing files)
+	if len(m.fileKeys) > 0 {
+		filesListEndY := filesListStartY + len(m.fileKeys)
+		if panelY >= filesListStartY && panelY < filesListEndY {
+			m.selectedFile = panelY - filesListStartY
+			m.unfocusAllInputs()
+			return m, nil
+		}
+	}
+
+	// File input fields Y coordinate
+	// After files list (or empty message), there's "Add File" label and input
+	fileInputLabelY := filesListStartY
+	if len(m.fileKeys) > 0 {
+		fileInputLabelY = filesListStartY + len(m.fileKeys) + 1
+	}
+	fileInputLineY := fileInputLabelY + 1
+
+	if panelY == fileInputLineY {
+		m.unfocusAllInputs()
+		// Field input is ~20 chars, path starts after " = "
+		if panelX < 22 {
+			m.focusedInput = inputFileField
+		}
+		if panelX >= 22 {
+			m.focusedInput = inputFilePath
+		}
+		m.focusInput(m.focusedInput)
+		return m, nil
+	}
+
+	// Body section
+	bodyStartY := fileInputLineY + 2
 	if panelY >= bodyStartY && panelY < bodyStartY+8 {
 		m.unfocusAllInputs()
 		m.focusedInput = inputBody
@@ -1019,6 +1112,7 @@ func (m *Model) handleMouseEvent(msg tea.MouseMsg) (*Model, tea.Cmd) {
 func (m *Model) isInputFocused() bool {
 	return m.methodInput.Focused() || m.urlInput.Focused() ||
 		m.headerKeyInput.Focused() || m.headerValueInput.Focused() ||
+		m.fileFieldInput.Focused() || m.filePathInput.Focused() ||
 		m.bodyInput.Focused()
 }
 
