@@ -40,8 +40,9 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
         run: |
-          go build -ldflags "-s -w" -o raco
+          go build -ldflags "-s -w -X raco/cli/version.Version=${VERSION}" -o raco
           tar -czf raco_${{ matrix.suffix }}.tar.gz raco
 
       - name: Upload artifact

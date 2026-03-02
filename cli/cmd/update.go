@@ -110,7 +110,7 @@ func RunUpdate() int {
 		return 1
 	}
 
-	newPath := exePath + ".new"
+	newPath := filepath.Join(os.TempDir(), "raco_new")
 	if err := extractBinary(tarballPath, newPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
@@ -123,7 +123,11 @@ func RunUpdate() int {
 	}
 
 	if err := os.Rename(newPath, exePath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: cannot replace binary (try running with sudo): %v\n", err)
+		if os.IsPermission(err) {
+			fmt.Fprintf(os.Stderr, "Permission denied. Run: sudo raco update\n")
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "Error: cannot replace binary: %v\n", err)
 		return 1
 	}
 
