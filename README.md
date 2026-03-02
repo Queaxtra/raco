@@ -47,6 +47,11 @@ go build -o raco
 sudo mv raco /usr/local/bin/
 ```
 
+**Update to latest (when already installed):**
+```bash
+raco update
+```
+
 ## Usage
 
 ### Mouse Support

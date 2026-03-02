@@ -46,6 +46,8 @@ func Run(args []string) int {
 		return cmd.RunRunner(ctx, subArgs)
 	case "stats":
 		return cmd.RunStats(ctx, subArgs)
+	case "update":
+		return cmd.RunUpdate()
 	case "help", "-h", "--help":
 		printUsage()
 		return 0
@@ -75,6 +77,7 @@ Commands:
   curl             Parse/convert cURL commands
   run              Run collection with assertions
   stats            Show request statistics
+  update           Update raco to latest release
   help             Show this help
   version          Show version
 
