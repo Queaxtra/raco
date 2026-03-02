@@ -3,6 +3,7 @@ package util
 import (
 	"path/filepath"
 	"raco/util/func/validate"
+	"strings"
 )
 
 func ValidateURL(rawURL string) bool {
@@ -18,12 +19,23 @@ func IsPathContained(path, base string) bool {
 	if err != nil {
 		return false
 	}
-
-	for _, char := range rel {
-		if char == '.' {
-			return false
-		}
+	cleaned := filepath.Clean(rel)
+	if cleaned == ".." {
+		return false
 	}
-
+	if cleaned == "." {
+		return false
+	}
+	if strings.HasPrefix(cleaned, "..") {
+		return false
+	}
 	return true
+}
+
+func ValidateWebSocketURL(rawURL string) bool {
+	return validate.WebSocketURL(rawURL)
+}
+
+func ValidateGRPCTarget(target string) bool {
+	return validate.GRPCTarget(target)
 }

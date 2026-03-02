@@ -29,9 +29,36 @@ fi
 echo "Installing raco $LATEST for ${OS}_${ARCH}..."
 
 URL="https://github.com/$REPO/releases/download/$LATEST/raco_${OS}_${ARCH}.tar.gz"
+CHECKSUM_URL="https://github.com/$REPO/releases/download/$LATEST/checksums.txt"
 TMP_DIR=$(mktemp -d)
 
 curl -sL "$URL" -o "$TMP_DIR/raco.tar.gz"
+curl -sL "$CHECKSUM_URL" -o "$TMP_DIR/checksums.txt"
+
+# Verify SHA256 checksum before extracting to prevent tampered binary execution.
+EXPECTED=$(grep "raco_${OS}_${ARCH}.tar.gz" "$TMP_DIR/checksums.txt" | awk '{print $1}')
+if [ -z "$EXPECTED" ]; then
+    echo "Error: checksum not found for raco_${OS}_${ARCH}.tar.gz"
+    rm -rf "$TMP_DIR"
+    exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum "$TMP_DIR/raco.tar.gz" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 "$TMP_DIR/raco.tar.gz" | awk '{print $1}')
+else
+    echo "Error: no sha256sum or shasum found; cannot verify download"
+    rm -rf "$TMP_DIR"
+    exit 1
+fi
+
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+    echo "Error: checksum mismatch (expected $EXPECTED, got $ACTUAL)"
+    rm -rf "$TMP_DIR"
+    exit 1
+fi
+
 tar -xzf "$TMP_DIR/raco.tar.gz" -C "$TMP_DIR"
 
 if [ -w "$INSTALL_DIR" ]; then

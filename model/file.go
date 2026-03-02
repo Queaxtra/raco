@@ -23,6 +23,14 @@ func (f *FileUpload) Validate() error {
 		return fmt.Errorf("file path is required")
 	}
 
+	// filepath.Clean + EvalSymlinks prevents both ".." traversal and symlink-based escapes.
+	cleanPath := filepath.Clean(f.FilePath)
+	resolvedPath, err := filepath.EvalSymlinks(cleanPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve file path: %w", err)
+	}
+	f.FilePath = resolvedPath
+
 	info, err := os.Stat(f.FilePath)
 	if err != nil {
 		return fmt.Errorf("cannot access file: %w", err)

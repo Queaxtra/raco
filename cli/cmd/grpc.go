@@ -15,6 +15,7 @@ import (
 func RunGRPC(ctx *Context, args []string) int {
 	fs := flag.NewFlagSet("grpc", flag.ContinueOnError)
 	address := fs.String("r", "", "gRPC server address (host:port)")
+	insecure := fs.Bool("insecure", false, "Use insecure connection (no TLS)")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -28,6 +29,9 @@ func RunGRPC(ctx *Context, args []string) int {
 	}
 
 	client := protocol.NewGRPCClient(*address)
+	if setInsecure, ok := client.(interface{ SetInsecure(bool) }); ok {
+		setInsecure.SetInsecure(*insecure)
+	}
 	connCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -38,7 +42,8 @@ func RunGRPC(ctx *Context, args []string) int {
 	defer client.Close()
 
 	fmt.Printf("Connected to gRPC server at %s\n", *address)
-	fmt.Println("Type messages and press Enter to send. Ctrl+C to exit.")
+	fmt.Println("Send JSON envelope: {\"service\":\"pkg.Service\",\"method\":\"Method\",\"payload\":{...},\"metadata\":{...}}")
+	fmt.Println("Ctrl+C to exit.")
 
 	msgCh, err := client.Receive()
 	if err != nil {
@@ -97,9 +102,14 @@ func printGRPCUsage() {
 	fmt.Println(`Usage: raco grpc [options]
 
 Options:
-  -r <address>  gRPC server address (host:port)
+  -r <address>   gRPC server address (host:port) (required)
+  -insecure     Use insecure connection (no TLS, for localhost)
+
+Send (stdin) JSON envelope per line, e.g.:
+  {"service":"grpc.health.v1.Health","method":"Check","payload":{},"metadata":{}}
 
 Examples:
   raco grpc -r localhost:50051
+  raco grpc -r localhost:50051 -insecure
   raco grpc -r api.example.org:443`)
 }

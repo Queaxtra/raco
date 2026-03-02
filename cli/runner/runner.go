@@ -86,20 +86,24 @@ func Execute(cfg *Config) *Result {
 
 func executeRequest(client *http.Client, req *model.Request, env *model.Environment) RequestResult {
 	result := RequestResult{
-		Name:   req.Name,
-		Method: req.Method,
-		URL:    req.URL,
+		Name:       req.Name,
+		Method:     req.Method,
+		URL:        req.URL,
+		Assertions: make([]AssertionResult, 0, len(req.Assertions)),
 	}
 
 	processedReq := &model.Request{
-		ID:         req.ID,
-		Name:       req.Name,
-		Method:     req.Method,
-		URL:        http.ReplaceEnvVars(req.URL, env),
-		Headers:    make(map[string]string),
-		Body:       http.ReplaceEnvVars(req.Body, env),
-		Assertions: req.Assertions,
-		Extractors: req.Extractors,
+		ID:             req.ID,
+		Name:           req.Name,
+		Method:         req.Method,
+		URL:            http.ReplaceEnvVars(req.URL, env),
+		Headers:        make(map[string]string, len(req.Headers)),
+		Body:           http.ReplaceEnvVars(req.Body, env),
+		Query:          http.ReplaceEnvVarsInMap(req.Query, env),
+		Files:          req.Files,
+		TimeoutSeconds: req.TimeoutSeconds,
+		Assertions:     req.Assertions,
+		Extractors:     req.Extractors,
 	}
 
 	for k, v := range req.Headers {

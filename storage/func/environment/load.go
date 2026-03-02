@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"raco/model"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -42,17 +43,12 @@ func Load(basePath string, name string) (*model.Environment, error) {
 	return &env, nil
 }
 
+// isPathContained ensures path is under base (prevents ".." traversal), not that path has no dots (e.g. .yaml).
 func isPathContained(path, base string) bool {
 	rel, err := filepath.Rel(base, path)
 	if err != nil {
 		return false
 	}
-
-	for _, char := range rel {
-		if char == '.' {
-			return false
-		}
-	}
-
-	return true
+	cleaned := filepath.Clean(rel)
+	return cleaned != ".." && cleaned != "." && !strings.HasPrefix(cleaned, "..")
 }

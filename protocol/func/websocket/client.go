@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"raco/protocol/message"
+	"raco/util"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ const (
 
 type Client struct {
 	url          string
+	reqHeader    map[string]string
 	conn         *websocket.Conn
 	connected    atomic.Bool
 	mu           sync.RWMutex
@@ -43,8 +45,22 @@ type sendPayload struct {
 
 func NewClient(targetURL string) *Client {
 	return &Client{
-		url:    targetURL,
-		dialer: defaultDialer(),
+		url:       targetURL,
+		reqHeader: nil,
+		dialer:    defaultDialer(),
+	}
+}
+
+func (c *Client) SetHeaders(headers map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(headers) == 0 {
+		c.reqHeader = nil
+		return
+	}
+	c.reqHeader = make(map[string]string, len(headers))
+	for k, v := range headers {
+		c.reqHeader[k] = v
 	}
 }
 
@@ -63,6 +79,10 @@ func (c *Client) Connect(ctx context.Context) error {
 		return errors.New("already connected")
 	}
 
+	if !util.ValidateWebSocketURL(c.url) {
+		return errors.New("invalid URL")
+	}
+
 	parsedURL, err := url.Parse(c.url)
 	if err != nil {
 		return errors.New("invalid URL: " + err.Error())
@@ -75,7 +95,17 @@ func (c *Client) Connect(ctx context.Context) error {
 	connectCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 
-	conn, resp, err := c.dialer.DialContext(connectCtx, c.url, nil)
+	var dialHeader http.Header
+	c.mu.RLock()
+	if len(c.reqHeader) > 0 {
+		dialHeader = make(http.Header)
+		for k, v := range c.reqHeader {
+			dialHeader.Set(k, v)
+		}
+	}
+	c.mu.RUnlock()
+
+	conn, resp, err := c.dialer.DialContext(connectCtx, c.url, dialHeader)
 	if err != nil {
 		if resp != nil {
 			resp.Body.Close()

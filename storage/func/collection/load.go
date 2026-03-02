@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"raco/model"
 	"regexp"
+	"strings"
 )
 
 var validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -41,17 +42,12 @@ func Load(basePath string, id string) (*model.Collection, error) {
 	return &col, nil
 }
 
+// isPathContained ensures path is under base (prevents ".." traversal), not that path has no dots (e.g. .json).
 func isPathContained(path, base string) bool {
 	rel, err := filepath.Rel(base, path)
 	if err != nil {
 		return false
 	}
-
-	for _, char := range rel {
-		if char == '.' {
-			return false
-		}
-	}
-
-	return true
+	cleaned := filepath.Clean(rel)
+	return cleaned != ".." && cleaned != "." && !strings.HasPrefix(cleaned, "..")
 }

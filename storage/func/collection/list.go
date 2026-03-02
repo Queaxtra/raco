@@ -17,17 +17,18 @@ func List(basePath string) ([]*model.Collection, error) {
 		return nil, err
 	}
 
-	collections := make([]*model.Collection, 0)
+	collections := make([]*model.Collection, 0, len(entries))
 	for _, entry := range entries {
-		isFile := !entry.IsDir()
-		isJSON := filepath.Ext(entry.Name()) == ".json"
-		if isFile && isJSON {
-			id := entry.Name()[:len(entry.Name())-5]
-			col, err := Load(basePath, id)
-			if err == nil {
-				collections = append(collections, col)
-			}
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
 		}
+		name := entry.Name()
+		id := name[:len(name)-5]
+		col, err := Load(basePath, id)
+		if err != nil {
+			continue
+		}
+		collections = append(collections, col)
 	}
 
 	return collections, nil

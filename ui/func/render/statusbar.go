@@ -1,54 +1,41 @@
 package render
 
 import (
+	"raco/ui/theme"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Background(lipgloss.Color("235")).
-			Padding(0, 1)
-
-	statusBarKeyStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("255")).
-				Bold(true)
-
-	statusBarSeparatorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-)
-
-func StatusBar(width int) string {
-	shortcuts := []struct {
-		key  string
-		desc string
-	}{
-		{"Ctrl+B", "Toggle Sidebar"},
-		{"Ctrl+N", "New Coll."},
-		{"Ctrl+W", "Save Req."},
-		{"Ctrl+R", "Send"},
-		{"F1", "Dashboard"},
-		{"Ctrl+P", "Palette"},
-		{"Tab", "Switch"},
-		{"Ctrl+F", "Add File"},
-		{"Ctrl+X", "Del File"},
-		{"Esc", "Back"},
-		{"Ctrl+C", "Quit"},
+// StatusBar renders the single-line bottom bar: current mode on the left,
+// vim-style key hints on the right. Keeps hints visible so developers can learn shortcuts.
+func StatusBar(width int, mode string) string {
+	left := theme.Muted().Render("raco")
+	if mode != "" {
+		left = theme.Muted().Render(mode)
 	}
 
-	var items []string
-	for _, s := range shortcuts {
-		key := statusBarKeyStyle.Render(s.key)
-		items = append(items, key+" "+s.desc)
+	hints := []struct{ key, desc string }{
+		{"j/k", "nav"},
+		{"gg/G", "top/bot"},
+		{"h/l", "focus"},
+		{"e", "send"},
+		{"w", "save"},
+		{"Tab", "next"},
+		{":", "palette"},
+		{"q", "quit"},
 	}
 
-	separator := statusBarSeparatorStyle.Render(" ")
-	content := lipgloss.JoinHorizontal(lipgloss.Left, items[0])
-	for i := 1; i < len(items); i++ {
-		content += separator + items[i]
+	var rightParts []string
+	for _, h := range hints {
+		rightParts = append(rightParts, theme.KeyHint().Render(h.key)+theme.Muted().Render(" "+h.desc))
 	}
+	rightStr := lipgloss.JoinHorizontal(lipgloss.Top, rightParts...)
+	w := width - lipgloss.Width(left) - 2
+	if w < 10 {
+		w = 10
+	}
+	right := lipgloss.NewStyle().Width(w).Align(lipgloss.Right).Render(rightStr)
 
-	return statusBarStyle.
-		Width(width - 2).
-		Render(content)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+	return theme.StatusBar().Width(width).Render(content)
 }

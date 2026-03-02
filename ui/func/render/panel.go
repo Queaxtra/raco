@@ -4,50 +4,22 @@ import (
 	"fmt"
 	"strings"
 
+	"raco/ui/theme"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// panelSelectedStyle highlights the current header or file row in the request panel.
 var (
-	panelBorderColor       = lipgloss.Color("240")
-	panelActiveBorderColor = lipgloss.Color("255")
-	panelLabelColor        = lipgloss.Color("255")
-	panelValueColor        = lipgloss.Color("252")
-	panelHelpColor         = lipgloss.Color("240")
-
-	panelStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(panelBorderColor).
-			Padding(1, 2)
-
-	panelActiveStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(panelActiveBorderColor).
-				Padding(1, 2)
-
-	panelTitleStyle = lipgloss.NewStyle().
-			Foreground(panelLabelColor).
-			Bold(true).
-			MarginBottom(1)
-
-	panelLabelStyle = lipgloss.NewStyle().
-			Foreground(panelLabelColor).
-			Bold(true)
-
-	panelSectionStyle = lipgloss.NewStyle().
-				MarginTop(1)
-
-	panelHeaderItemStyle = lipgloss.NewStyle().
-				Foreground(panelValueColor).
-				PaddingLeft(2)
-
-	panelHelpStyle = lipgloss.NewStyle().
-			Foreground(panelHelpColor).
-			Italic(true).
-			MarginTop(1)
+	panelSelectedStyle = lipgloss.NewStyle().
+				Foreground(theme.Text).
+				Background(theme.BgPanel).
+				PaddingLeft(1)
 )
 
+// PanelInputs holds the bubbletea input models and selection state for the request builder.
 type PanelInputs struct {
 	MethodInput      textinput.Model
 	URLInput         textinput.Model
@@ -62,145 +34,78 @@ type PanelInputs struct {
 	SelectedFile     int
 }
 
+// Panel renders the main request builder: method, URL, headers list + add row, files list + add row, body.
+// Uses theme.Box for consistent border; selected header/file row uses panelSelectedStyle.
 func Panel(width, height int, isActive bool, headers map[string]string, inputs PanelInputs) string {
 	if headers == nil {
 		headers = make(map[string]string)
 	}
 
-	style := panelStyle
-	if isActive {
-		style = panelActiveStyle
-	}
+	style := theme.Box(isActive).Width(width - 2).Height(height - 2)
 
-	var content strings.Builder
+	var b strings.Builder
+	b.WriteString(theme.Title().Render("Request"))
+	b.WriteString("\n\n")
 
-	content.WriteString(panelTitleStyle.Render("Request Builder"))
-	content.WriteString("\n\n")
+	methodHint := theme.Muted().Italic(true).Render(" ←/→ or h/l")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, theme.Label().Render("Method "), inputs.MethodInput.View(), methodHint))
+	b.WriteString("\n\n")
 
-	methodHint := lipgloss.NewStyle().
-		Foreground(panelHelpColor).
-		Italic(true).
-		Render(" (← → to change)")
-	
-	methodLine := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		panelLabelStyle.Render("Protocol: "),
-		inputs.MethodInput.View(),
-		methodHint,
-	)
-	content.WriteString(methodLine)
-	content.WriteString("\n\n")
+	b.WriteString(theme.Label().Render("URL"))
+	b.WriteString("\n")
+	b.WriteString(inputs.URLInput.View())
+	b.WriteString("\n\n")
 
-	content.WriteString(panelLabelStyle.Render("URL"))
-	content.WriteString("\n")
-	content.WriteString(inputs.URLInput.View())
-	content.WriteString("\n")
-
-	headerTitle := "Headers"
+	b.WriteString(theme.Label().Render("Headers"))
 	if len(headers) > 0 {
-		headerTitle = fmt.Sprintf("Headers (%d)", len(headers))
+		b.WriteString(theme.Muted().Render(fmt.Sprintf(" (%d)", len(headers))))
 	}
-	content.WriteString(panelSectionStyle.Render(panelLabelStyle.Render(headerTitle)))
-	content.WriteString("\n")
-
+	b.WriteString("\n")
 	if len(headers) == 0 {
-		emptyMsg := lipgloss.NewStyle().
-			Foreground(panelHelpColor).
-			Italic(true).
-			PaddingLeft(2).
-			Render("No headers (Ctrl+S to add)")
-		content.WriteString(emptyMsg)
+		b.WriteString(theme.Muted().Italic(true).PaddingLeft(1).Render("Ctrl+S add") + "\n")
 	}
-
-	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("212")).
-		Background(lipgloss.Color("236")).
-		PaddingLeft(2)
-
 	for i, key := range inputs.HeaderKeys {
 		value := headers[key]
-		headerLine := fmt.Sprintf("%s: %s", key, value)
+		line := fmt.Sprintf("  %s: %s", key, value)
 		if i == inputs.SelectedHeader {
-			content.WriteString(selectedStyle.Render("▸ " + headerLine))
+			b.WriteString(panelSelectedStyle.Render("▸ "+line) + "\n")
 		}
 		if i != inputs.SelectedHeader {
-			content.WriteString(panelHeaderItemStyle.Render("  " + headerLine))
+			b.WriteString(theme.Muted().PaddingLeft(2).Render(line) + "\n")
 		}
-		content.WriteString("\n")
 	}
+	b.WriteString(theme.Muted().Render("  Key : Value") + "\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, inputs.HeaderKeyInput.View(), theme.Muted().Render(" : "), inputs.HeaderValueInput.View()))
+	b.WriteString("\n\n")
 
-	content.WriteString("\n")
-	content.WriteString(panelLabelStyle.Render("Add Header"))
-	content.WriteString("\n")
-
-	headerInputLine := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		inputs.HeaderKeyInput.View(),
-		lipgloss.NewStyle().Foreground(panelLabelColor).Render(" : "),
-		inputs.HeaderValueInput.View(),
-	)
-	content.WriteString(headerInputLine)
-	content.WriteString("\n")
-
-	fileTitle := "Files"
+	b.WriteString(theme.Label().Render("Files"))
 	if len(inputs.FileKeys) > 0 {
-		fileTitle = fmt.Sprintf("Files (%d)", len(inputs.FileKeys))
+		b.WriteString(theme.Muted().Render(fmt.Sprintf(" (%d)", len(inputs.FileKeys))))
 	}
-	content.WriteString(panelSectionStyle.Render(panelLabelStyle.Render(fileTitle)))
-	content.WriteString("\n")
-
+	b.WriteString("\n")
 	if len(inputs.FileKeys) == 0 {
-		emptyMsg := lipgloss.NewStyle().
-			Foreground(panelHelpColor).
-			Italic(true).
-			PaddingLeft(2).
-			Render("No files (Ctrl+F to add)")
-		content.WriteString(emptyMsg)
+		b.WriteString(theme.Muted().Italic(true).PaddingLeft(1).Render("Ctrl+F add") + "\n")
 	}
-
-	fileSelectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("212")).
-		Background(lipgloss.Color("236")).
-		PaddingLeft(2)
-
 	for i, key := range inputs.FileKeys {
-		fileLine := key
 		if i == inputs.SelectedFile {
-			content.WriteString(fileSelectedStyle.Render("▸ " + fileLine))
+			b.WriteString(panelSelectedStyle.Render("▸ "+key) + "\n")
 		}
 		if i != inputs.SelectedFile {
-			content.WriteString(panelHeaderItemStyle.Render("  " + fileLine))
+			b.WriteString(theme.Muted().PaddingLeft(2).Render(key) + "\n")
 		}
-		content.WriteString("\n")
 	}
+	b.WriteString(theme.Muted().Render("  field = path") + "\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, inputs.FileFieldInput.View(), theme.Muted().Render(" = "), inputs.FilePathInput.View()))
+	b.WriteString("\n\n")
 
-	content.WriteString("\n")
-	content.WriteString(panelLabelStyle.Render("Add File"))
-	content.WriteString("\n")
+	b.WriteString(theme.Label().Render("Body"))
+	b.WriteString("\n")
+	b.WriteString(inputs.BodyInput.View())
 
-	fileInputLine := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		inputs.FileFieldInput.View(),
-		lipgloss.NewStyle().Foreground(panelLabelColor).Render(" = "),
-		inputs.FilePathInput.View(),
-	)
-	content.WriteString(fileInputLine)
-	content.WriteString("\n")
-
-	content.WriteString(panelSectionStyle.Render(panelLabelStyle.Render("Body")))
-	content.WriteString("\n")
-	content.WriteString(inputs.BodyInput.View())
-	content.WriteString("\n")
-
-	help := GetPanelHelp()
-	content.WriteString(panelHelpStyle.Render(help))
-
-	return style.
-		Width(width - 4).
-		Height(height - 4).
-		Render(content.String())
+	return style.Render(b.String())
 }
 
+// GetPanelHelp returns the one-line shortcut hint for the request panel (Tab, e, w, Ctrl+S/D/F/X).
 func GetPanelHelp() string {
-	return "Tab: Next • Ctrl+R: Send • Ctrl+W: Save • Ctrl+S: +Header • Ctrl+D: -Header • Ctrl+F: +File • Ctrl+X: -File • Esc: Back"
+	return "Tab next  Shift+Tab prev  e send  w save  h/l method  Ctrl+S/D header  Ctrl+F/X file"
 }

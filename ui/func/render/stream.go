@@ -5,29 +5,19 @@ import (
 	"strings"
 	"time"
 
+	"raco/ui/theme"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Stream panel colors: sent (green), received (yellow), error (red).
 var (
-	streamBorderColor    = lipgloss.Color("240")
-	streamTitleColor     = lipgloss.Color("255")
-	streamSentColor      = lipgloss.Color("42")
-	streamReceivedColor  = lipgloss.Color("33")
-	streamErrorColor     = lipgloss.Color("196")
-	streamSystemColor    = lipgloss.Color("240")
-	streamTimestampColor = lipgloss.Color("240")
-
-	streamStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(streamBorderColor).
-			Padding(1, 2)
-
-	streamTitleStyle = lipgloss.NewStyle().
-				Foreground(streamTitleColor).
-				Bold(true).
-				MarginBottom(1)
+	streamSentColor     = lipgloss.Color("2")
+	streamReceivedColor = lipgloss.Color("3")
+	streamErrorColor    = lipgloss.Color("1")
 )
 
+// StreamMessage is one entry in the WebSocket/gRPC stream log (sent, received, system, error).
 type StreamMessage struct {
 	Type      string
 	Data      string
@@ -35,31 +25,25 @@ type StreamMessage struct {
 	Direction string
 }
 
+// Stream renders the WebSocket/gRPC view: title + [connected/disconnected], recent messages (newest at bottom),
+// and the send input when active. input is the bubbletea textinput for the message line.
 func Stream(width, height int, messages []StreamMessage, protocol string, active bool, input interface{}) string {
+	style := theme.Box(true).Width(width - 2).Height(height - 2)
 	var content strings.Builder
 
-	title := fmt.Sprintf("%s Stream Monitor", protocol)
-	status := "Disconnected"
-	statusColor := streamErrorColor
+	title := fmt.Sprintf("%s Stream", protocol)
+	status := "disconnected"
+	statusStyle := lipgloss.NewStyle().Foreground(streamErrorColor)
 	if active {
-		status = "Connected"
-		statusColor = streamSentColor
+		status = "connected"
+		statusStyle = lipgloss.NewStyle().Foreground(streamSentColor)
 	}
-
-	titleLine := fmt.Sprintf("%s [%s]",
-		streamTitleStyle.Render(title),
-		lipgloss.NewStyle().Foreground(statusColor).Render(status),
-	)
-	content.WriteString(titleLine)
+	content.WriteString(theme.Title().Render(title))
+	content.WriteString(statusStyle.Render(" ["+status+"]"))
 	content.WriteString("\n\n")
 
 	if len(messages) == 0 {
-		emptyMsg := lipgloss.NewStyle().
-			Foreground(streamSystemColor).
-			Italic(true).
-			Render("No messages yet...")
-		content.WriteString(emptyMsg)
-		content.WriteString("\n")
+		content.WriteString(theme.Muted().Italic(true).Render("No messages yet") + "\n")
 	}
 
 	maxMessages := height - 12
@@ -73,69 +57,46 @@ func Stream(width, height int, messages []StreamMessage, protocol string, active
 	}
 
 	for _, msg := range messages[startIdx:] {
-		timestamp := msg.Timestamp.Format("15:04:05")
-		timestampStr := lipgloss.NewStyle().
-			Foreground(streamTimestampColor).
-			Render(fmt.Sprintf("[%s]", timestamp))
-
-		var directionStr string
+		ts := theme.Muted().Render("[" + msg.Timestamp.Format("15:04:05") + "]")
+		var dir string
 		var dataStyle lipgloss.Style
-
 		switch msg.Direction {
 		case "sent":
-			directionStr = "→ SENT"
+			dir = "→"
 			dataStyle = lipgloss.NewStyle().Foreground(streamSentColor)
 		case "received":
-			directionStr = "← RECV"
+			dir = "←"
 			dataStyle = lipgloss.NewStyle().Foreground(streamReceivedColor)
 		case "system":
-			directionStr = "• SYS"
-			dataStyle = lipgloss.NewStyle().Foreground(streamSystemColor)
+			dir = "•"
+			dataStyle = theme.Muted()
 		case "error":
-			directionStr = "✗ ERR"
+			dir = "✗"
 			dataStyle = lipgloss.NewStyle().Foreground(streamErrorColor)
 		default:
-			directionStr = "• MSG"
-			dataStyle = lipgloss.NewStyle().Foreground(streamSystemColor)
+			dir = "•"
+			dataStyle = theme.Muted()
 		}
-
-		line := fmt.Sprintf("%s %s: %s",
-			timestampStr,
-			directionStr,
-			dataStyle.Render(truncateString(msg.Data, width-30)),
-		)
-
-		content.WriteString(line)
-		content.WriteString("\n")
+		content.WriteString(fmt.Sprintf("%s %s %s\n", ts, dir, dataStyle.Render(truncateString(msg.Data, width-30))))
 	}
 
 	if active {
 		content.WriteString("\n")
-		inputLabel := lipgloss.NewStyle().
-			Foreground(streamTitleColor).
-			Render("Send: ")
-		content.WriteString(inputLabel)
-
-		if textInput, ok := input.(fmt.Stringer); ok {
-			content.WriteString(textInput.String())
+		content.WriteString(theme.Label().Render("Send: "))
+		if textInput, ok := input.(interface{ View() string }); ok {
+			content.WriteString(textInput.View())
 		}
 	}
 
 	if !active {
 		content.WriteString("\n")
-		helpText := lipgloss.NewStyle().
-			Foreground(streamSystemColor).
-			Italic(true).
-			Render("←/→: Change Protocol • Ctrl+R: Connect")
-		content.WriteString(helpText)
+		content.WriteString(theme.Muted().Italic(true).Render("e to connect"))
 	}
 
-	return streamStyle.
-		Width(width - 4).
-		Height(height - 4).
-		Render(content.String())
+	return style.Render(content.String())
 }
 
+// truncateString shortens long message payloads so the stream log stays readable.
 func truncateString(s string, maxLen int) string {
 	if maxLen < 4 {
 		maxLen = 4

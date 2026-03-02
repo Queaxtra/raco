@@ -1,3 +1,6 @@
+// Package ui implements the TUI (terminal UI) for raco: sidebar (collections + history),
+// request panel (method, URL, headers, files, body), response/stream views, command palette,
+// and vim-style keybindings (j/k, gg/G, h/l, e, w, :, etc.). Renders via ui/theme and ui/func/render.
 package ui
 
 import (
@@ -89,6 +92,8 @@ type Model struct {
 	history            []*model.HistoryEntry
 	historyExpanded    bool
 	sidebarVisible     bool
+	// prevKey stores last key for "gg" (go to top): first "g" sets it, second "g" within same session jumps to index 0.
+	prevKey            string
 }
 
 func NewModel(storagePath string) Model {
@@ -313,7 +318,8 @@ func (m *Model) View() string {
 		mainWidth = m.width - sidebarWidth
 	}
 
-	statusBar := render.StatusBar(m.width)
+	statusMode := m.statusMode()
+	statusBar := render.StatusBar(m.width, statusMode)
 	contentHeight := m.height - 2
 
 	var sidebarView string
@@ -409,6 +415,25 @@ func (m *Model) View() string {
 	return baseView
 }
 
+// statusMode returns the current view name for the status bar (sidebar, request, response, stream, dashboard, palette).
+func (m *Model) statusMode() string {
+	switch m.mode {
+	case viewSidebar:
+		return "sidebar"
+	case viewPanel:
+		return "request"
+	case viewResponse:
+		return "response"
+	case viewStream:
+		return "stream"
+	case viewDashboard:
+		return "dashboard"
+	case viewCommandPalette:
+		return "palette"
+	}
+	return ""
+}
+
 func (m *Model) updateDimensions() {
 	inputs := helper.DimensionInputs{
 		URLInput:         &m.urlInput,
@@ -438,12 +463,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == viewPanel && m.isInputFocused() {
 		key := msg.String()
 
-		// intercept ctrl+f before it reaches file inputs
-		// bubbles textinput treats ctrl+f as "find" which can clear the buffer
 		if key == "ctrl+f" {
 			if m.focusedInput == inputFileField || m.focusedInput == inputFilePath {
-				// capture values directly from current model state
-				// do not pass ctrl+f to textinput to avoid buffer corruption
 				return m.handleFileAddFromCurrentState()
 			}
 			return m.handleFileAdd()
@@ -453,7 +474,12 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleFileDelete()
 		}
 
-		if key == "ctrl+c" || key == "tab" || key == "esc" || key == "ctrl+r" || key == "ctrl+s" || key == "ctrl+d" {
+		if key == "ctrl+c" || key == "tab" || key == "shift+tab" || key == "esc" || key == "ctrl+r" || key == "ctrl+s" || key == "ctrl+d" {
+			return m.handleGlobalKeys(msg)
+		}
+
+		// Vim keys always act as shortcuts even when an input is focused (e send, w save, h/l focus).
+		if key == "e" || key == "w" || key == "h" || key == "l" {
 			return m.handleGlobalKeys(msg)
 		}
 
@@ -476,14 +502,23 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	k := msg.String()
+
+	switch k {
 	case "ctrl+c", "q":
+		m.prevKey = ""
 		return m, tea.Quit
 
 	case "tab":
+		m.prevKey = ""
 		return m.handleTabNavigation(), nil
 
+	case "shift+tab":
+		m.prevKey = ""
+		return m.handleShiftTabNavigation(), nil
+
 	case "esc":
+		m.prevKey = ""
 		m.unfocusAllInputs()
 		if m.mode == viewResponse {
 			m.mode = viewSidebar
@@ -491,58 +526,137 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "j", "down":
+		m.prevKey = ""
 		return m.handleDownNavigation(), nil
 
 	case "k", "up":
+		m.prevKey = ""
 		return m.handleUpNavigation(), nil
 
 	case "enter":
+		m.prevKey = ""
 		return m.handleEnterKey(), nil
 
+	// Vim-style: e = execute/send request, w = save request, h = focus sidebar, l = focus panel.
+	case "e":
+		m.prevKey = ""
+		return m, m.executeCurrentRequest()
+
+	case "w":
+		m.prevKey = ""
+		m.showSaveRequest = true
+		m.requestNameInput.Focus()
+		return m, nil
+
+	case "h":
+		m.prevKey = ""
+		m.mode = viewSidebar
+		m.unfocusAllInputs()
+		return m, nil
+
+	case "l":
+		m.prevKey = ""
+		if m.mode == viewSidebar {
+			m.mode = viewPanel
+			m.focusedInput = inputMethod
+			m.focusInput(m.focusedInput)
+		}
+		return m, nil
+
+	// Vim-style: G = last sidebar item, gg = first (two g's in a row).
+	case "G":
+		m.prevKey = ""
+		return m.handleGoLast(), nil
+
+	case "g":
+		if m.prevKey == "g" {
+			m.prevKey = ""
+			m.selectedIndex = 0
+			return m, nil
+		}
+		m.prevKey = "g"
+		return m, nil
+
+	// : and / open command palette (vim-style).
+	case ":", "/":
+		m.prevKey = ""
+		m.mode = viewCommandPalette
+		m.commandPaletteInput.Focus()
+		m.buildCommandPaletteItems()
+		return m, nil
+
 	case "ctrl+r":
+		m.prevKey = ""
 		return m, m.executeCurrentRequest()
 
 	case "ctrl+s":
+		m.prevKey = ""
 		return m.handleHeaderAdd()
 
 	case "ctrl+d":
+		m.prevKey = ""
 		return m.handleHeaderDelete()
 
 	case "ctrl+n":
+		m.prevKey = ""
 		m.showCreateCollection = true
 		m.collectionInput.Focus()
 		return m, nil
 
 	case "ctrl+w":
+		m.prevKey = ""
 		m.showSaveRequest = true
 		m.requestNameInput.Focus()
 		return m, nil
-	
-
 
 	case "ctrl+q":
+		m.prevKey = ""
 		if m.streamActive && m.streamClient != nil {
 			return m, command.DisconnectStream(m.streamClient)
 		}
 		return m, nil
 
 	case "ctrl+p":
+		m.prevKey = ""
 		m.mode = viewCommandPalette
 		m.commandPaletteInput.Focus()
 		m.buildCommandPaletteItems()
 		return m, nil
 
 	case "f1":
+		m.prevKey = ""
 		m.mode = viewDashboard
 		return m, nil
 
 	case "ctrl+b":
+		m.prevKey = ""
 		m.sidebarVisible = !m.sidebarVisible
 		m.updateDimensions()
 		return m, nil
 	}
 
+	m.prevKey = ""
 	return m, nil
+}
+
+// handleGoLast moves sidebar selection to the last visible item (vim G).
+func (m *Model) handleGoLast() *Model {
+	total := helper.TotalSidebarItems(m.collections, m.expandedIndex, m.history, m.historyExpanded)
+	if total > 0 {
+		m.selectedIndex = total - 1
+	}
+	return m
+}
+
+// handleShiftTabNavigation moves focus to the previous request-panel field (method → body → … → method).
+func (m *Model) handleShiftTabNavigation() *Model {
+	if m.mode == viewPanel && m.isInputFocused() {
+		m.unfocusAllInputs()
+		m.focusedInput = (m.focusedInput + 6) % 7
+		m.focusInput(m.focusedInput)
+		return m
+	}
+	return m
 }
 
 func (m *Model) handleTabNavigation() *Model {
@@ -896,7 +1010,11 @@ func (m *Model) executeCurrentRequest() tea.Cmd {
 		if m.streamClient != nil {
 			m.streamClient.Close()
 		}
-		m.streamClient = protocol2.NewWebSocketClient(url)
+		wsClient := protocol2.NewWebSocketClient(url)
+		if setHeaders, ok := wsClient.(interface{ SetHeaders(map[string]string) }); ok && len(m.headers) > 0 {
+			setHeaders.SetHeaders(m.headers)
+		}
+		m.streamClient = wsClient
 		m.streamMessages = make([]model.StreamMessage, 0)
 		m.mode = viewStream
 		m.addHistoryEntryWithProtocol("WS")
@@ -935,6 +1053,12 @@ func (m *Model) executeCurrentRequest() tea.Cmd {
 	if m.currentRequest != nil {
 		req.Assertions = m.currentRequest.Assertions
 		req.Extractors = m.currentRequest.Extractors
+		if len(m.currentRequest.Query) > 0 {
+			req.Query = m.currentRequest.Query
+		}
+		if m.currentRequest.TimeoutSeconds > 0 {
+			req.TimeoutSeconds = m.currentRequest.TimeoutSeconds
+		}
 	}
 
 	if !util.ValidateURL(req.URL) {

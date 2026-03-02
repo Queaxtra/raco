@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"raco/cli/runner"
+	"raco/util/osnotify"
 )
 
 func RunRunner(ctx *Context, args []string) int {
@@ -55,10 +56,12 @@ func RunRunner(ctx *Context, args []string) int {
 	result := runner.Execute(cfg)
 	runner.PrintResult(result, *outputFmt)
 
+	msg := fmt.Sprintf("%s: %d passed, %d failed", result.CollectionName, result.PassedCount, result.FailedCount)
 	if result.FailedCount > 0 {
+		osnotify.Send("Raco", msg)
 		return 1
 	}
-
+	osnotify.Send("Raco", msg)
 	return 0
 }
 

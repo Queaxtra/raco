@@ -23,6 +23,17 @@ var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{
 var tokenRegex = regexp.MustCompile(`[A-Za-z0-9_-]{32,}`)
 var bearerRegex = regexp.MustCompile(`Bearer\s+[A-Za-z0-9._-]+`)
 
+// sensitiveJSONPatterns is compiled once to avoid repeated regexp.Compile inside RedactJSON.
+var sensitiveJSONPatterns []*regexp.Regexp
+
+func init() {
+	sensitiveJSONPatterns = make([]*regexp.Regexp, 0, len(sensitivePatterns))
+	for _, pattern := range sensitivePatterns {
+		re := regexp.MustCompile(`"` + regexp.QuoteMeta(pattern) + `"\s*:\s*"[^"]*"`)
+		sensitiveJSONPatterns = append(sensitiveJSONPatterns, re)
+	}
+}
+
 func RedactSensitiveData(data string) string {
 	if data == "" {
 		return data
@@ -71,9 +82,9 @@ func RedactJSON(json string) string {
 
 	redacted := json
 
-	for _, pattern := range sensitivePatterns {
-		keyPattern := regexp.MustCompile(`"` + pattern + `"\s*:\s*"[^"]*"`)
-		redacted = keyPattern.ReplaceAllString(redacted, `"`+pattern+`": "[REDACTED]"`)
+	for i, re := range sensitiveJSONPatterns {
+		replacement := `"` + sensitivePatterns[i] + `": "[REDACTED]"`
+		redacted = re.ReplaceAllString(redacted, replacement)
 	}
 
 	return redacted

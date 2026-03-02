@@ -189,18 +189,21 @@ func collectionAddRequest(ctx *Context, store *storage.Storage, args []string) i
 		return 1
 	}
 
-	method, url, body, headers, err := ParseRequestArgsPublic(args[1:])
+	var name string
+	requestArgs := make([]string, 0, len(args)-1)
+	for i := 1; i < len(args); i++ {
+		if args[i] == "-n" && i+1 < len(args) {
+			name = args[i+1]
+			i++
+			continue
+		}
+		requestArgs = append(requestArgs, args[i])
+	}
+
+	method, url, body, headers, query, timeoutSeconds, err := ParseRequestArgsPublic(requestArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
-	}
-
-	var name string
-	for i, arg := range args {
-		if arg == "-n" && i+1 < len(args) {
-			name = args[i+1]
-			break
-		}
 	}
 
 	if name == "" {
@@ -208,14 +211,16 @@ func collectionAddRequest(ctx *Context, store *storage.Storage, args []string) i
 	}
 
 	req := &model.Request{
-		ID:           uuid.New().String(),
-		Name:         name,
-		Method:       strings.ToUpper(method),
-		URL:          url,
-		Headers:      headers,
-		Body:         body,
-		CreatedAt:    time.Now(),
-		CollectionID: colID,
+		ID:             uuid.New().String(),
+		Name:           name,
+		Method:         strings.ToUpper(method),
+		URL:            url,
+		Headers:        headers,
+		Query:          query,
+		Body:           body,
+		TimeoutSeconds: timeoutSeconds,
+		CreatedAt:      time.Now(),
+		CollectionID:   colID,
 	}
 
 	col.Requests = append(col.Requests, req)

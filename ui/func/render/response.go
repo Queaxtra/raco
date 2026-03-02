@@ -4,137 +4,62 @@ import (
 	"encoding/json"
 	"fmt"
 	"raco/model"
+	"raco/ui/theme"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Response panel styles: status by code (2xx green, 3xx yellow, 4xx/5xx red), body in a sub-box.
 var (
-	responseBorderColor      = lipgloss.Color("240")
-	responseActiveColor      = lipgloss.Color("255")
-	responseSuccessColor     = lipgloss.Color("42")
-	responseErrorColor       = lipgloss.Color("196")
-	responseWarningColor     = lipgloss.Color("220")
-	responseLabelColor       = lipgloss.Color("255")
-	responseValueColor       = lipgloss.Color("252")
-	responseHelpColor        = lipgloss.Color("240")
-
-	responseStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(responseBorderColor).
-			Padding(1, 2)
-
-	responseActiveStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(responseActiveColor).
-				Padding(1, 2)
-
-	responseTitleStyle = lipgloss.NewStyle().
-				Foreground(responseLabelColor).
-				Bold(true).
-				MarginBottom(1)
-
-	responseStatusSuccessStyle = lipgloss.NewStyle().
-					Foreground(responseSuccessColor).
-					Bold(true)
-
-	responseStatusErrorStyle = lipgloss.NewStyle().
-					Foreground(responseErrorColor).
-					Bold(true)
-
-	responseStatusWarningStyle = lipgloss.NewStyle().
-					Foreground(responseWarningColor).
-					Bold(true)
-
-	responseLabelStyle = lipgloss.NewStyle().
-				Foreground(responseLabelColor).
-				Bold(true)
-
-	responseValueStyle = lipgloss.NewStyle().
-				Foreground(responseValueColor)
-
-	responseSectionStyle = lipgloss.NewStyle().
-				MarginTop(1).
-				MarginBottom(1)
-
-	responseHeaderItemStyle = lipgloss.NewStyle().
-				Foreground(responseValueColor).
-				PaddingLeft(2)
-
-	responseBodyStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(responseBorderColor).
-				Padding(1)
-
-	responseHelpStyle = lipgloss.NewStyle().
-				Foreground(responseHelpColor).
-				Italic(true).
-				MarginTop(1)
+	responseStatusSuccessStyle = lipgloss.NewStyle().Foreground(theme.Success).Bold(true)
+	responseStatusErrorStyle   = lipgloss.NewStyle().Foreground(theme.Error).Bold(true)
+	responseStatusWarningStyle = lipgloss.NewStyle().Foreground(theme.Warning).Bold(true)
+	responseBodyStyle          = lipgloss.NewStyle().
+					BorderStyle(lipgloss.NormalBorder()).
+					BorderForeground(theme.Border).
+					Padding(0, 1)
 )
 
+// Response renders the HTTP response view: status line, duration, optional headers, scrollable body.
+// Body is formatted (JSON indented) and passed to responseViewport for j/k scrolling.
 func Response(width, height int, isActive bool, response *model.Response, responseViewport *viewport.Model) string {
-	if response == nil {
-		return responseStyle.
-			Width(width - 4).
-			Height(height - 4).
-			Render("No response yet")
-	}
+	style := theme.Box(isActive).Width(width - 2).Height(height - 2)
 
-	style := responseStyle
-	if isActive {
-		style = responseActiveStyle
+	if response == nil {
+		return style.Render(theme.Muted().Italic(true).Render("No response — e to send"))
 	}
 
 	var content strings.Builder
-
-	content.WriteString(responseTitleStyle.Render("Response"))
+	content.WriteString(theme.Title().Render("Response"))
 	content.WriteString("\n\n")
 
 	statusStyle := GetStatusStyle(response.StatusCode)
-	statusLine := fmt.Sprintf("Status: %d %s",
-		response.StatusCode,
-		GetStatusText(response.StatusCode))
-	content.WriteString(statusStyle.Render(statusLine))
-	content.WriteString("\n")
-
-	durationLine := fmt.Sprintf("Duration: %v", response.Duration)
-	content.WriteString(responseValueStyle.Render(durationLine))
-	content.WriteString("\n")
+	content.WriteString(statusStyle.Render(fmt.Sprintf("%d %s", response.StatusCode, GetStatusText(response.StatusCode))))
+	content.WriteString("  ")
+	content.WriteString(theme.Muted().Render(fmt.Sprintf("%v", response.Duration)))
+	content.WriteString("\n\n")
 
 	if len(response.Headers) > 0 {
-		content.WriteString(responseSectionStyle.Render(responseLabelStyle.Render("Headers")))
+		content.WriteString(theme.Label().Render("Headers"))
 		content.WriteString("\n")
-
 		for key, value := range response.Headers {
-			headerLine := fmt.Sprintf("%s: %s", key, value)
-			content.WriteString(responseHeaderItemStyle.Render(headerLine))
-			content.WriteString("\n")
+			content.WriteString(theme.Muted().PaddingLeft(1).Render(key+": "+value) + "\n")
 		}
+		content.WriteString("\n")
 	}
 
-	content.WriteString(responseSectionStyle.Render(responseLabelStyle.Render("Body")))
+	content.WriteString(theme.Label().Render("Body"))
 	content.WriteString("\n")
-
 	bodyContent := FormatResponseBody(response.Body)
 	responseViewport.SetContent(bodyContent)
+	content.WriteString(responseBodyStyle.Width(width - 8).Height(height - 16).Render(responseViewport.View()))
 
-	bodyView := responseBodyStyle.
-		Width(width - 12).
-		Height(height - 20).
-		Render(responseViewport.View())
-	content.WriteString(bodyView)
-	content.WriteString("\n")
-
-	help := "j/k: Scroll • Tab: Switch • Esc: Back • F1: Dashboard • Ctrl+P: Palette"
-	content.WriteString(responseHelpStyle.Render(help))
-
-	return style.
-		Width(width - 4).
-		Height(height - 4).
-		Render(content.String())
+	return style.Render(content.String())
 }
 
+// GetStatusStyle returns color by HTTP status range: success (2xx), warning (3xx), error (4xx/5xx).
 func GetStatusStyle(code int) lipgloss.Style {
 	if code >= 200 && code < 300 {
 		return responseStatusSuccessStyle
@@ -145,6 +70,7 @@ func GetStatusStyle(code int) lipgloss.Style {
 	return responseStatusErrorStyle
 }
 
+// GetStatusText returns a short label for common HTTP status codes.
 func GetStatusText(code int) string {
 	statusTexts := map[int]string{
 		200: "OK",
@@ -180,20 +106,16 @@ func GetStatusText(code int) string {
 	return "Unknown"
 }
 
+// FormatResponseBody pretty-prints JSON when possible; truncates very large bodies and appends [truncated].
 func FormatResponseBody(body string) string {
 	if body == "" {
-		return lipgloss.NewStyle().
-			Foreground(responseHelpColor).
-			Italic(true).
-			Render("Empty response body")
+		return theme.Muted().Italic(true).Render("(empty)")
 	}
 
 	maxBodyLen := 100000
 	if len(body) > maxBodyLen {
 		truncated := body[:maxBodyLen]
-		warning := lipgloss.NewStyle().
-			Foreground(responseWarningColor).
-			Render("\n\n[Response truncated - too large to display]")
+		warning := theme.Muted().Render("\n\n[truncated]")
 		return truncated + warning
 	}
 
@@ -210,6 +132,7 @@ func FormatResponseBody(body string) string {
 	return SyntaxHighlightJSON(string(formatted))
 }
 
+// SyntaxHighlightJSON applies simple key/string/number/bool/null coloring to JSON lines for readability.
 func SyntaxHighlightJSON(jsonStr string) string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("105"))
 	stringStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))

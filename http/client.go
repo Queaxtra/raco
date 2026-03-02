@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"raco/model"
@@ -16,27 +17,81 @@ import (
 	"time"
 )
 
+// privateNets parsed once to avoid repeated ParseCIDR on every request.
+var privateNets []*net.IPNet
+
+func init() {
+	cidrs := []string{
+		"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"169.254.0.0/16", "::1/128", "fe80::/10", "fc00::/7",
+	}
+	privateNets = make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		privateNets = append(privateNets, n)
+	}
+}
+
 type Client struct {
 	httpClient *http.Client
 }
 
 func NewClient() *Client {
 	transport := &http.Transport{
-		Proxy: nil,
-		DialContext: safeDialContext,
-		ForceAttemptHTTP2: true,
-		MaxIdleConns:        100,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
+		Proxy:                 nil,
+		DialContext:           safeDialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 	}
 
 	return &Client{
 		httpClient: &http.Client{
-			Timeout:       30 * time.Second,
+			Timeout:       5 * time.Minute,
 			Transport:     transport,
 			CheckRedirect: safeRedirectCheck,
 		},
 	}
+}
+
+const (
+	defaultRequestTimeout = 30 * time.Second
+	maxRetries            = 3
+	retryBaseDelay        = 1 * time.Second
+)
+
+func requestTimeout(req *model.Request) time.Duration {
+	if req != nil && req.TimeoutSeconds > 0 {
+		t := time.Duration(req.TimeoutSeconds) * time.Second
+		if t > 5*time.Minute {
+			return 5 * time.Minute
+		}
+		return t
+	}
+	return defaultRequestTimeout
+}
+
+func isIdempotentMethod(method string) bool {
+	switch method {
+	case "GET", "HEAD", "PUT", "DELETE":
+		return true
+	}
+	return false
+}
+
+func isRetryableStatus(code int) bool {
+	if code >= 500 {
+		return true
+	}
+	if code == 429 {
+		return true
+	}
+	return false
 }
 
 func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -61,27 +116,11 @@ func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 }
 
 func isPrivateIP(ip net.IP) bool {
-	privateCIDRs := []string{
-		"127.0.0.0/8",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"169.254.0.0/16",
-		"::1/128",
-		"fe80::/10",
-		"fc00::/7",
-	}
-
-	for _, cidr := range privateCIDRs {
-		_, ipNet, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if ipNet.Contains(ip) {
+	for _, n := range privateNets {
+		if n.Contains(ip) {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -110,43 +149,82 @@ func (c *Client) Execute(req *model.Request) (*model.Response, error) {
 		return nil, errors.New("invalid HTTP method")
 	}
 
-	startTime := time.Now()
+	timeout := requestTimeout(req)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	httpReq, err := c.buildRequest(req)
-	if err != nil {
-		return nil, err
-	}
+	var lastResp *model.Response
+	var lastErr error
 
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer httpResp.Body.Close()
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := retryBaseDelay * (1 << (attempt - 1))
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				if lastErr != nil {
+					return nil, lastErr
+				}
+				return lastResp, nil
+			case <-time.After(delay):
+			}
+		}
 
-	maxBodySize := int64(10 * 1024 * 1024)
-	limitedReader := io.LimitReader(httpResp.Body, maxBodySize)
+		httpReq, err := c.buildRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		httpReq = httpReq.WithContext(ctx)
 
-	body, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return nil, err
-	}
+		startTime := time.Now()
+		httpResp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			continue
+		}
 
-	headers := make(map[string]string)
-	for key, values := range httpResp.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
+		maxBodySize := int64(10 * 1024 * 1024)
+		limitedReader := io.LimitReader(httpResp.Body, maxBodySize)
+		body, readErr := io.ReadAll(limitedReader)
+		httpResp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+
+		headerLen := len(httpResp.Header)
+		headers := make(map[string]string, headerLen)
+		for key, values := range httpResp.Header {
+			if len(values) > 0 {
+				headers[key] = values[0]
+			}
+		}
+
+		resp := &model.Response{
+			StatusCode: httpResp.StatusCode,
+			Headers:    headers,
+			Body:       string(body),
+			Duration:   time.Since(startTime),
+			Timestamp:  time.Now(),
+		}
+		lastResp = resp
+		lastErr = nil
+
+		shouldRetry := isIdempotentMethod(req.Method) && isRetryableStatus(httpResp.StatusCode) && attempt < maxRetries
+		if !shouldRetry {
+			return resp, nil
 		}
 	}
 
-	resp := &model.Response{
-		StatusCode: httpResp.StatusCode,
-		Headers:    headers,
-		Body:       string(body),
-		Duration:   time.Since(startTime),
-		Timestamp:  time.Now(),
+	if lastErr != nil {
+		return nil, lastErr
 	}
-
-	return resp, nil
+	return lastResp, nil
 }
 
 func (c *Client) buildRequest(req *model.Request) (*http.Request, error) {
@@ -163,10 +241,24 @@ func (c *Client) buildRequest(req *model.Request) (*http.Request, error) {
 	}
 
 	if req.Body != "" && len(req.Files) == 0 {
-		bodyReader = bytes.NewBufferString(req.Body)
+		bodyReader = strings.NewReader(req.Body)
 	}
 
-	httpReq, err := http.NewRequest(req.Method, req.URL, bodyReader)
+	requestURL := req.URL
+	if len(req.Query) > 0 {
+		parsed, err := url.Parse(req.URL)
+		if err != nil {
+			return nil, err
+		}
+		q := parsed.Query()
+		for k, v := range req.Query {
+			q.Set(k, v)
+		}
+		parsed.RawQuery = q.Encode()
+		requestURL = parsed.String()
+	}
+
+	httpReq, err := http.NewRequest(req.Method, requestURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -235,12 +327,22 @@ func buildMultipartBody(req *model.Request) (io.Reader, string, error) {
 }
 
 func SaveDownloadedFile(resp *model.Response, downloadPath string) (*model.FileDownload, error) {
-	dir := filepath.Dir(downloadPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// Resolve the canonical path before creating any directories to prevent path traversal.
+	cleanPath := filepath.Clean(downloadPath)
+	dir := filepath.Dir(cleanPath)
+
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, err
 	}
 
-	file, err := os.Create(downloadPath)
+	// Re-evaluate after MkdirAll so EvalSymlinks can resolve the full path.
+	absDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	finalPath := filepath.Join(absDir, filepath.Base(cleanPath))
+
+	file, err := os.OpenFile(finalPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -261,15 +363,15 @@ func SaveDownloadedFile(resp *model.Response, downloadPath string) (*model.FileD
 	}
 
 	return &model.FileDownload{
-		FilePath:     downloadPath,
-		OriginalName: filepath.Base(downloadPath),
+		FilePath:     finalPath,
+		OriginalName: filepath.Base(finalPath),
 		ContentType:  contentType,
 		Size:         info.Size(),
 	}, nil
 }
 
 func ReplaceEnvVars(input string, env *model.Environment) string {
-	if env == nil {
+	if env == nil || len(env.Variables) == 0 {
 		return input
 	}
 
@@ -280,4 +382,15 @@ func ReplaceEnvVars(input string, env *model.Environment) string {
 	}
 
 	return result
+}
+
+func ReplaceEnvVarsInMap(m map[string]string, env *model.Environment) map[string]string {
+	if env == nil || len(m) == 0 {
+		return m
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = ReplaceEnvVars(v, env)
+	}
+	return out
 }

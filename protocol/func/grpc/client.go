@@ -3,9 +3,12 @@ package grpc
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"raco/protocol/message"
+	"raco/util"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,6 +75,10 @@ func (c *Client) Connect(ctx context.Context) error {
 		return errors.New("already connected")
 	}
 
+	if !util.ValidateGRPCTarget(c.address) {
+		return errors.New("invalid gRPC target")
+	}
+
 	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
@@ -126,18 +133,32 @@ func (c *Client) Send(data string) error {
 		return errors.New("not connected")
 	}
 
-	c.mu.RLock()
-	conn := c.conn
-	c.mu.RUnlock()
-
-	if conn == nil {
-		return errors.New("connection is nil")
+	data = strings.TrimSpace(data)
+	if data == "" {
+		c.safeLog("system", "gRPC Send requires JSON envelope: {\"service\":\"...\",\"method\":\"...\",\"payload\":{...},\"metadata\":{...}}")
+		return nil
 	}
 
-	c.safeLog("sent", "message sent")
-	c.safeLog("system", "gRPC Send requires JSON envelope with service/method/type")
+	var callReq CallRequest
+	if err := json.Unmarshal([]byte(data), &callReq); err != nil {
+		c.safeLog("system", "gRPC Send requires JSON envelope with service/method/type")
+		return nil
+	}
 
-	return nil
+	service := strings.TrimSpace(callReq.Service)
+	method := strings.TrimSpace(callReq.Method)
+	if service == "" || method == "" {
+		c.safeLog("system", "gRPC envelope must include non-empty \"service\" and \"method\"")
+		return nil
+	}
+
+	payloadBytes, err := json.Marshal(callReq.Payload)
+	if err != nil {
+		c.safeLog("error", fmt.Sprintf("payload marshal: %v", err))
+		return err
+	}
+
+	return c.SendMessage(service, method, payloadBytes, callReq.Metadata)
 }
 
 func (c *Client) SendMessage(service, method string, payload []byte, md map[string]string) error {
@@ -167,7 +188,8 @@ func (c *Client) SendMessage(service, method string, payload []byte, md map[stri
 		return err
 	}
 
-	c.safeLog("received", fmt.Sprintf("response received (%d bytes)", len(respBytes)))
+	c.safeLog("received", fmt.Sprintf("response (%d bytes)", len(respBytes)))
+	c.safePushReceived(string(respBytes))
 	return nil
 }
 
@@ -295,6 +317,32 @@ func (c *Client) safeLog(msgType, data string) {
 		Data:      data,
 		Timestamp: time.Now(),
 		Direction: "system",
+	}:
+	default:
+	}
+}
+
+func (c *Client) safePushReceived(data string) {
+	c.mu.RLock()
+	msgCh := c.messages
+	connected := c.connected.Load()
+	c.mu.RUnlock()
+
+	if !connected || msgCh == nil {
+		return
+	}
+
+	const maxDisplay = 64 * 1024
+	if len(data) > maxDisplay {
+		data = data[:maxDisplay] + "\n... (truncated)"
+	}
+
+	select {
+	case msgCh <- message.Message{
+		Type:      "text",
+		Data:      data,
+		Timestamp:  time.Now(),
+		Direction:  "received",
 	}:
 	default:
 	}

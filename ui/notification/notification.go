@@ -3,6 +3,8 @@ package notification
 import (
 	"time"
 
+	"raco/util/osnotify"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -34,6 +36,7 @@ func (s *State) Hide() {
 
 func ShowCmd(text string) tea.Cmd {
 	return func() tea.Msg {
+		osnotify.Send("Raco", text)
 		return Msg(text)
 	}
 }

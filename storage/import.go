@@ -85,12 +85,19 @@ func ImportPostmanCollection(filePath string) (*model.Collection, error) {
 		Requests: make([]*model.Request, 0),
 	}
 
-	extractRequests(postman.Item, collection)
+	extractRequests(postman.Item, collection, 0)
 
 	return collection, nil
 }
 
-func extractRequests(items []PostmanItem, collection *model.Collection) {
+const maxPostmanDepth = 10
+
+func extractRequests(items []PostmanItem, collection *model.Collection, depth int) {
+	// Guard against deeply nested Postman collections causing stack exhaustion.
+	if depth > maxPostmanDepth {
+		return
+	}
+
 	for _, item := range items {
 		if item.Request != nil {
 			req := convertPostmanRequest(item.Name, item.Request)
@@ -100,7 +107,7 @@ func extractRequests(items []PostmanItem, collection *model.Collection) {
 		}
 
 		if len(item.Item) > 0 {
-			extractRequests(item.Item, collection)
+			extractRequests(item.Item, collection, depth+1)
 		}
 	}
 }

@@ -19,6 +19,7 @@ High-performance terminal-based HTTP client
 - Command Palette for quick request access
 - Fast HTTP client with timeout control
 - Vim-style navigation
+- Desktop notifications when the terminal is in the background (macOS/Linux)
 
 ## Installation
 
@@ -55,32 +56,35 @@ sudo mv raco /usr/local/bin/
 
 ### Keyboard Shortcuts
 
-**Global**
-- `Ctrl+C` - Quit
-- `Tab` - Switch between panels
-- `Esc` - Unfocus current input / Close modal
-- `Ctrl+N` - Create new collection
-- `Ctrl+W` - Save current request to collection
-- `F1` - Open Dashboard (Metrics)
-- `Ctrl+P` - Open Command Palette
+**Global (vim-style)**
+- `q` / `Ctrl+C` - Quit
+- `Tab` / `Shift+Tab` - Next / previous field or panel
+- `h` / `l` - Focus sidebar / focus request panel
+- `e` - Send request (execute)
+- `w` - Save request (write)
+- `:` / `/` / `Ctrl+P` - Command palette
+- `Esc` - Unfocus / back
+- `Ctrl+B` - Toggle sidebar
+- `F1` - Dashboard
 
 **Sidebar**
-- `j/k` - Navigate up/down
+- `j` / `k` - Navigate down/up
+- `gg` - First item (press `g` twice)
+- `G` - Last item
 - `Enter` - Expand/collapse collection or load request
 
 **Request Panel**
-- `Tab` - Cycle through inputs
-- `←/→` - Change protocol (HTTP/WS/gRPC)
-- `Ctrl+R` - Send request / Connect stream
-- `Ctrl+S` - Add header
-- `Ctrl+D` - Delete header
-- `Ctrl+F` - Add file for upload
-- `Ctrl+X` - Remove file from upload
+- `Tab` / `Shift+Tab` - Next / previous input
+- `←` / `→` or `h` / `l` - Change method (GET/POST/…/WS/gRPC)
+- `e` / `Ctrl+R` - Send request
+- `w` / `Ctrl+W` - Save request
+- `Ctrl+S` / `Ctrl+D` - Add / delete header
+- `Ctrl+F` / `Ctrl+X` - Add / remove file
 
 **Response Panel**
-- `j/k` - Scroll content
-- `Tab` - Switch panel
-- `Esc` - Back to Sidebar
+- `j` / `k` - Scroll
+- `Tab` / `h` - Back to sidebar
+- `Esc` - Back
 
 ## Workflow
 
@@ -123,6 +127,16 @@ sudo mv raco /usr/local/bin/
 1. Press `F1` anytime to open Dashboard
 2. View request statistics, success rates, and recent activity
 3. Press `Tab` or `Esc` to return to sidebar
+
+### Desktop notifications
+
+When you run a request (TUI or CLI) or a collection run, Raco can send an OS-level notification so you see the result even if the terminal is not focused:
+
+- **TUI:** Every in-app toast (e.g. “Request saved”, “Connected”, errors) also triggers a desktop notification.
+- **CLI `raco req`:** On success you get “Request completed: &lt;status&gt;”; on failure, “Request failed: &lt;error&gt;”.
+- **CLI `raco run`:** After the run, you get “&lt;collection&gt;: X passed, Y failed”.
+
+Supported platforms: **macOS** (via `osascript`), **Linux** (via `notify-send`; install `libnotify` if needed). Other platforms show no desktop notification.
 
 ## Storage
 

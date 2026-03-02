@@ -80,10 +80,13 @@ Commands:
 
 Examples:
   raco req -m GET -r https://api.example.org
-  raco req -m POST -r https://api.example.org -d '{"key":"value"}'
+  raco req -m GET -r https://api.example.org -q "page=1;limit=10"
+  raco req -m POST -r https://api.example.org -d '{"key":"value"}' -t 60
   raco req -m POST -r https://api.example.org/upload -f file:/path/to/file.pdf
   raco ws -r wss://echo.websocket.org
+  raco ws -r wss://api.example.org/ws -H "Authorization:Bearer token"
   raco grpc -r localhost:50051
+  raco grpc -r localhost:50051 -insecure
   raco col list
   raco env list
   raco import postman collection.json
