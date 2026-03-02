@@ -60,19 +60,18 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create checksums
+      - name: Flatten and create checksums
         run: |
-          cd artifacts
-          find . -name "*.tar.gz" -exec sh -c 'h=$(sha256sum "$1" | awk "{print \$1}"); b=$(basename "$1"); echo "$h  $b"' _ {} \; | sort > checksums.txt
-          mv checksums.txt ..
+          mkdir -p release
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          cd release
+          sha256sum *.tar.gz > checksums.txt
           cd ..
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/*/*.tar.gz
-            checksums.txt
+          files: release/*
           draft: false
           prerelease: false
         env:
