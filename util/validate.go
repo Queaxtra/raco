@@ -3,8 +3,11 @@ package util
 import (
 	"path/filepath"
 	"raco/util/func/validate"
+	"regexp"
 	"strings"
 )
+
+var envKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 
 func ValidateURL(rawURL string) bool {
 	return validate.URL(rawURL)
@@ -38,4 +41,8 @@ func ValidateWebSocketURL(rawURL string) bool {
 
 func ValidateGRPCTarget(target string) bool {
 	return validate.GRPCTarget(target)
+}
+
+func ValidateEnvironmentKey(key string) bool {
+	return envKeyPattern.MatchString(key)
 }

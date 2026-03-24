@@ -15,10 +15,10 @@ const (
 )
 
 type Extractor struct {
-	Type     ExtractionType `json:"type" yaml:"type"`
-	Source   string         `json:"source" yaml:"source"`
-	Target   string         `json:"target" yaml:"target"`
-	Pattern  string         `json:"pattern,omitempty" yaml:"pattern,omitempty"`
+	Type    ExtractionType `json:"type" yaml:"type"`
+	Source  string         `json:"source" yaml:"source"`
+	Target  string         `json:"target" yaml:"target"`
+	Pattern string         `json:"pattern,omitempty" yaml:"pattern,omitempty"`
 }
 
 func ExtractValue(extractor Extractor, response *Response, env *Environment) error {
@@ -59,10 +59,13 @@ func ExtractValue(extractor Extractor, response *Response, env *Environment) err
 	}
 
 	if env.Variables == nil {
-		env.Variables = make(map[string]string)
+		env.Variables = make(map[string]EnvironmentVariable)
 	}
 
-	env.Variables[extractor.Target] = value
+	env.Variables[extractor.Target] = EnvironmentVariable{
+		Kind:  EnvironmentVariablePlain,
+		Value: value,
+	}
 	return nil
 }
 

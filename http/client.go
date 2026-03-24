@@ -41,13 +41,13 @@ type Client struct {
 
 func NewClient() *Client {
 	transport := &http.Transport{
-		Proxy:                 nil,
-		DialContext:           safeDialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   16,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		Proxy:               nil,
+		DialContext:         safeDialContext,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
 	}
 
 	return &Client{
@@ -370,13 +370,17 @@ func SaveDownloadedFile(resp *model.Response, downloadPath string) (*model.FileD
 	}, nil
 }
 
-func ReplaceEnvVars(input string, env *model.Environment) string {
-	if env == nil || len(env.Variables) == 0 {
+func ReplaceEnvVars(input string, env VariableProvider) string {
+	if env == nil {
+		return input
+	}
+	variables := env.GetVariables()
+	if len(variables) == 0 {
 		return input
 	}
 
 	result := input
-	for key, value := range env.Variables {
+	for key, value := range variables {
 		placeholder := "{{" + key + "}}"
 		result = strings.ReplaceAll(result, placeholder, value)
 	}
@@ -384,7 +388,7 @@ func ReplaceEnvVars(input string, env *model.Environment) string {
 	return result
 }
 
-func ReplaceEnvVarsInMap(m map[string]string, env *model.Environment) map[string]string {
+func ReplaceEnvVarsInMap(m map[string]string, env VariableProvider) map[string]string {
 	if env == nil || len(m) == 0 {
 		return m
 	}

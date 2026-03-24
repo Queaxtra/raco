@@ -14,9 +14,9 @@ import (
 // panelSelectedStyle highlights the current header or file row in the request panel.
 var (
 	panelSelectedStyle = lipgloss.NewStyle().
-				Foreground(theme.Text).
-				Background(theme.BgPanel).
-				PaddingLeft(1)
+		Foreground(theme.Text).
+		Background(theme.BgPanel).
+		PaddingLeft(1)
 )
 
 // PanelInputs holds the bubbletea input models and selection state for the request builder.
@@ -32,6 +32,8 @@ type PanelInputs struct {
 	SelectedHeader   int
 	FileKeys         []string
 	SelectedFile     int
+	Assertions       []string
+	Extractors       []string
 }
 
 // Panel renders the main request builder: method, URL, headers list + add row, files list + add row, body.
@@ -101,6 +103,26 @@ func Panel(width, height int, isActive bool, headers map[string]string, inputs P
 	b.WriteString(theme.Label().Render("Body"))
 	b.WriteString("\n")
 	b.WriteString(inputs.BodyInput.View())
+	b.WriteString("\n\n")
+
+	b.WriteString(theme.Label().Render("Assertions"))
+	b.WriteString("\n")
+	if len(inputs.Assertions) == 0 {
+		b.WriteString(theme.Muted().Italic(true).PaddingLeft(1).Render("Use CLI: raco col add-assertion") + "\n")
+	}
+	for _, assertion := range inputs.Assertions {
+		b.WriteString(theme.Muted().PaddingLeft(2).Render(assertion) + "\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(theme.Label().Render("Extractors"))
+	b.WriteString("\n")
+	if len(inputs.Extractors) == 0 {
+		b.WriteString(theme.Muted().Italic(true).PaddingLeft(1).Render("Use CLI: raco col add-extractor") + "\n")
+	}
+	for _, extractor := range inputs.Extractors {
+		b.WriteString(theme.Muted().PaddingLeft(2).Render(extractor) + "\n")
+	}
 
 	return style.Render(b.String())
 }

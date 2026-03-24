@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"raco/cli/output"
+	"raco/http"
 	"raco/model"
 	"raco/storage"
 	"raco/util"
@@ -35,6 +38,20 @@ func RunCollection(ctx *Context, args []string) int {
 		return collectionDelete(ctx.StoragePath, subArgs)
 	case "add-request", "add":
 		return collectionAddRequest(ctx, store, subArgs)
+	case "preview":
+		return collectionPreview(ctx, store, subArgs)
+	case "add-assertion":
+		return collectionAddAssertion(store, subArgs)
+	case "list-assertions":
+		return collectionListAssertions(store, subArgs)
+	case "remove-assertion":
+		return collectionRemoveAssertion(store, subArgs)
+	case "add-extractor":
+		return collectionAddExtractor(store, subArgs)
+	case "list-extractors":
+		return collectionListExtractors(store, subArgs)
+	case "remove-extractor":
+		return collectionRemoveExtractor(store, subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown action: %s\n", action)
 		printCollectionUsage()
@@ -51,6 +68,13 @@ Actions:
   create, new <name>    Create new collection
   delete, rm <id>       Delete collection
   add, add-request      Add request to collection
+  preview               Preview a saved request
+  add-assertion         Add assertion to a request
+  list-assertions       List request assertions
+  remove-assertion      Remove request assertion by index
+  add-extractor         Add extractor to a request
+  list-extractors       List request extractors
+  remove-extractor      Remove request extractor by index
 
 Examples:
   raco col list
@@ -76,6 +100,45 @@ func collectionList(store *storage.Storage) int {
 	}
 
 	return 0
+}
+
+// collectionPreview resolves a stored request without sending it so developers can
+// verify interpolation, headers, and body changes before execution.
+func collectionPreview(ctx *Context, store *storage.Storage, args []string) int {
+	fs := flag.NewFlagSet("preview", flag.ContinueOnError)
+	envName := fs.String("e", "", "Environment name")
+	outputFmt := fs.String("o", "text", "Output format: text, json")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	remaining := fs.Args()
+	if len(remaining) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col preview <collection-id> <request-ref> [-e env] [-o text|json]")
+		return 1
+	}
+
+	col, err := store.LoadCollection(remaining[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, remaining[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	var resolvedEnv *model.ResolvedEnvironment
+	if *envName != "" {
+		resolvedEnv, err = ctx.ResolveEnvironment(*envName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+	}
+
+	return output.PrintPreview(http.PreviewRequest(req, resolvedEnv, resolvedEnv), *outputFmt)
 }
 
 func collectionShow(store *storage.Storage, args []string) int {
@@ -232,6 +295,243 @@ func collectionAddRequest(ctx *Context, store *storage.Storage, args []string) i
 
 	fmt.Printf("Added request '%s' to collection '%s'\n", name, col.Name)
 	return 0
+}
+
+// collectionAddAssertion mutates a stored request in place after validating the CLI input.
+func collectionAddAssertion(store *storage.Storage, args []string) int {
+	fs := flag.NewFlagSet("add-assertion", flag.ContinueOnError)
+	assertionType := fs.String("type", "", "Assertion type")
+	field := fs.String("field", "", "Field path/name")
+	operator := fs.String("op", "", "Operator")
+	value := fs.String("value", "", "Expected value")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	remaining := fs.Args()
+	if len(remaining) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col add-assertion <collection-id> <request-ref> --type <type> --op <op> --value <value>")
+		return 1
+	}
+	col, err := store.LoadCollection(remaining[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, remaining[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	assertion := model.Assertion{
+		Type:     model.AssertionType(*assertionType),
+		Field:    *field,
+		Operator: *operator,
+		Value:    *value,
+	}
+	if err := validateAssertionConfig(assertion); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	req.Assertions = append(req.Assertions, assertion)
+	if err := store.SaveCollection(col); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Println("Assertion added")
+	return 0
+}
+
+func collectionListAssertions(store *storage.Storage, args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col list-assertions <collection-id> <request-ref>")
+		return 1
+	}
+	col, err := store.LoadCollection(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	for idx, assertion := range req.Assertions {
+		fmt.Printf("%d: type=%s field=%s op=%s value=%s\n", idx, assertion.Type, assertion.Field, assertion.Operator, assertion.Value)
+	}
+	return 0
+}
+
+func collectionRemoveAssertion(store *storage.Storage, args []string) int {
+	if len(args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col remove-assertion <collection-id> <request-ref> <index>")
+		return 1
+	}
+	col, err := store.LoadCollection(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	var index int
+	if _, scanErr := fmt.Sscanf(args[2], "%d", &index); scanErr != nil || index < 0 || index >= len(req.Assertions) {
+		fmt.Fprintln(os.Stderr, "Error: invalid assertion index")
+		return 1
+	}
+	req.Assertions = append(req.Assertions[:index], req.Assertions[index+1:]...)
+	if err := store.SaveCollection(col); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Println("Assertion removed")
+	return 0
+}
+
+// collectionAddExtractor attaches a chaining rule to a stored request.
+func collectionAddExtractor(store *storage.Storage, args []string) int {
+	fs := flag.NewFlagSet("add-extractor", flag.ContinueOnError)
+	extractorType := fs.String("type", "", "Extractor type")
+	source := fs.String("source", "", "Source path")
+	target := fs.String("target", "", "Environment key")
+	pattern := fs.String("pattern", "", "Regex pattern")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	remaining := fs.Args()
+	if len(remaining) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col add-extractor <collection-id> <request-ref> --type <type> --source <source> --target <key>")
+		return 1
+	}
+	col, err := store.LoadCollection(remaining[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, remaining[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	extractor := model.Extractor{
+		Type:    model.ExtractionType(*extractorType),
+		Source:  *source,
+		Target:  *target,
+		Pattern: *pattern,
+	}
+	if err := validateExtractorConfig(extractor); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	req.Extractors = append(req.Extractors, extractor)
+	if err := store.SaveCollection(col); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Println("Extractor added")
+	return 0
+}
+
+func collectionListExtractors(store *storage.Storage, args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col list-extractors <collection-id> <request-ref>")
+		return 1
+	}
+	col, err := store.LoadCollection(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	for idx, extractor := range req.Extractors {
+		fmt.Printf("%d: type=%s source=%s target=%s pattern=%s\n", idx, extractor.Type, extractor.Source, extractor.Target, extractor.Pattern)
+	}
+	return 0
+}
+
+func collectionRemoveExtractor(store *storage.Storage, args []string) int {
+	if len(args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: raco col remove-extractor <collection-id> <request-ref> <index>")
+		return 1
+	}
+	col, err := store.LoadCollection(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	_, req, err := resolveRequestRef(col, args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	var index int
+	if _, scanErr := fmt.Sscanf(args[2], "%d", &index); scanErr != nil || index < 0 || index >= len(req.Extractors) {
+		fmt.Fprintln(os.Stderr, "Error: invalid extractor index")
+		return 1
+	}
+	req.Extractors = append(req.Extractors[:index], req.Extractors[index+1:]...)
+	if err := store.SaveCollection(col); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Println("Extractor removed")
+	return 0
+}
+
+// validateAssertionConfig enforces the public CLI contract before collection data is saved.
+func validateAssertionConfig(assertion model.Assertion) error {
+	switch assertion.Type {
+	case model.AssertStatusCode:
+		if assertion.Field != "" {
+			return fmt.Errorf("status_code assertions must not define field")
+		}
+	case model.AssertJSONPath, model.AssertHeader:
+		if assertion.Field == "" {
+			return fmt.Errorf("%s assertions require field", assertion.Type)
+		}
+	case model.AssertRegex:
+		if len(assertion.Value) == 0 || len(assertion.Value) > 4096 {
+			return fmt.Errorf("regex assertion requires value up to 4KB")
+		}
+	default:
+		return fmt.Errorf("unsupported assertion type: %s", assertion.Type)
+	}
+	if assertion.Operator == "" {
+		return fmt.Errorf("assertion operator is required")
+	}
+	if assertion.Value == "" {
+		return fmt.Errorf("assertion value is required")
+	}
+	return nil
+}
+
+// validateExtractorConfig keeps extractor targets predictable and safe for env chaining.
+func validateExtractorConfig(extractor model.Extractor) error {
+	if !util.ValidateEnvironmentKey(extractor.Target) {
+		return fmt.Errorf("invalid extractor target: %s", extractor.Target)
+	}
+	switch extractor.Type {
+	case model.ExtractJSONPath, model.ExtractHeader:
+		if extractor.Source == "" {
+			return fmt.Errorf("%s extractor requires source", extractor.Type)
+		}
+	case model.ExtractRegex:
+		if extractor.Pattern == "" {
+			return fmt.Errorf("regex extractor requires pattern")
+		}
+	default:
+		return fmt.Errorf("unsupported extractor type: %s", extractor.Type)
+	}
+	return nil
 }
 
 func generateSlug(name string) string {

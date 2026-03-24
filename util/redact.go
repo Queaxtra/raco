@@ -2,6 +2,7 @@ package util
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -47,6 +48,29 @@ func RedactSensitiveData(data string) string {
 	return redacted
 }
 
+// RedactWithSecrets removes runtime secret values first and then applies generic masking.
+// The two-step approach catches secrets that do not match the generic token heuristics.
+func RedactWithSecrets(data string, secrets []string) string {
+	if data == "" {
+		return data
+	}
+	redacted := data
+	ordered := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		ordered = append(ordered, secret)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return len(ordered[i]) > len(ordered[j])
+	})
+	for _, secret := range ordered {
+		redacted = strings.ReplaceAll(redacted, secret, "[REDACTED]")
+	}
+	return RedactSensitiveData(redacted)
+}
+
 func RedactHeaders(headers map[string]string) map[string]string {
 	if headers == nil {
 		return nil
@@ -72,6 +96,18 @@ func RedactHeaders(headers map[string]string) map[string]string {
 		}
 	}
 
+	return redacted
+}
+
+// RedactHeadersWithSecrets combines header-name masking with value-based secret masking.
+func RedactHeadersWithSecrets(headers map[string]string, secrets []string) map[string]string {
+	redacted := RedactHeaders(headers)
+	if redacted == nil {
+		return nil
+	}
+	for key, value := range redacted {
+		redacted[key] = RedactWithSecrets(value, secrets)
+	}
 	return redacted
 }
 

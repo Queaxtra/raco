@@ -21,8 +21,11 @@ type requestConfig struct {
 	TimeoutSeconds int
 	Output         string
 	Environment    string
+	DryRun         bool
 }
 
+// RunRequest uses the same resolution path for dry-run previews and real execution.
+// That keeps CLI behavior aligned with the runner and the TUI.
 func RunRequest(ctx *Context, args []string) int {
 	cfg, err := parseRequestArgs(args)
 	if err != nil {
@@ -43,15 +46,21 @@ func RunRequest(ctx *Context, args []string) int {
 		TimeoutSeconds: cfg.TimeoutSeconds,
 	}
 
+	var resolvedEnv *model.ResolvedEnvironment
 	if cfg.Environment != "" {
-		env, err := ctx.Storage().LoadEnvironment(cfg.Environment)
-		if err == nil {
-			req.URL = http.ReplaceEnvVars(req.URL, env)
-			req.Body = http.ReplaceEnvVars(req.Body, env)
-			for k, v := range req.Headers {
-				req.Headers[k] = http.ReplaceEnvVars(v, env)
-			}
+		resolvedEnv, err = ctx.ResolveEnvironment(cfg.Environment)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
 		}
+	}
+
+	if cfg.DryRun {
+		return output.PrintPreview(http.PreviewRequest(req, resolvedEnv, resolvedEnv), previewOutputFormat(cfg.Output))
+	}
+
+	if resolvedEnv != nil {
+		req = http.ResolveRequest(req, resolvedEnv)
 	}
 
 	client := http.NewClient()
@@ -78,6 +87,7 @@ func parseRequestArgs(args []string) (*requestConfig, error) {
 	file := fs.String("f", "", "File upload (format: field_name:file_path)")
 	outputFmt := fs.String("o", "body", "Output format: body, json, full")
 	env := fs.String("e", "", "Environment name")
+	dryRun := fs.Bool("dry-run", false, "Resolve request without sending it")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -97,6 +107,7 @@ func parseRequestArgs(args []string) (*requestConfig, error) {
 		TimeoutSeconds: *timeout,
 		Output:         *outputFmt,
 		Environment:    *env,
+		DryRun:         *dryRun,
 	}
 
 	if *query != "" {
@@ -144,6 +155,14 @@ func ParseRequestArgsPublic(args []string) (method, url, body string, headers, q
 	return cfg.Method, cfg.URL, cfg.Body, cfg.Headers, cfg.Query, cfg.TimeoutSeconds, nil
 }
 
+// previewOutputFormat narrows execution formats down to the preview-safe formats we support.
+func previewOutputFormat(format string) string {
+	if format == "json" {
+		return "json"
+	}
+	return "text"
+}
+
 func printRequestUsage() {
 	fmt.Println(`Usage: raco req [options]
 
@@ -157,9 +176,11 @@ Options:
   -f <file>     File upload (field_name:path)
   -o <format>   Output: body, json, full
   -e <name>     Environment name
+  --dry-run     Resolve request without sending it
 
 Examples:
   raco req -m GET -r https://api.example.org
   raco req -m GET -r https://api.example.org -q "page=1;limit=10"
-  raco req -m POST -r https://api.example.org -d '{"key":"value"}' -t 60`)
+  raco req -m POST -r https://api.example.org -d '{"key":"value"}' -t 60
+  raco req -m POST -r https://api.example.org -e production --dry-run -o json`)
 }

@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Save writes environment metadata atomically to avoid partially written local files.
 func Save(basePath string, env *model.Environment) error {
 	if env == nil {
 		return errors.New("environment is nil")
@@ -19,18 +20,25 @@ func Save(basePath string, env *model.Environment) error {
 		return errors.New("invalid environment name format")
 	}
 
+	if env.Variables == nil {
+		env.Variables = make(map[string]model.EnvironmentVariable)
+	}
+
 	if err := storagefunc.EnsureDir(filepath.Join(basePath, "environments")); err != nil {
 		return err
 	}
 
 	path := filepath.Join(basePath, "environments", env.Name+".yaml")
+	expectedDir := filepath.Join(basePath, "environments")
+	if resolvedExpectedDir, resolveErr := filepath.EvalSymlinks(expectedDir); resolveErr == nil {
+		expectedDir = resolvedExpectedDir
+	}
 
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		resolvedPath = path
+		resolvedPath = filepath.Join(expectedDir, filepath.Base(path))
 	}
 
-	expectedDir := filepath.Join(basePath, "environments")
 	if !isPathContained(resolvedPath, expectedDir) {
 		return errors.New("path traversal detected")
 	}

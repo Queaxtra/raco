@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"fmt"
 	"raco/http"
 	"raco/metrics"
 	"raco/model"
@@ -33,6 +34,7 @@ const (
 	viewDashboard
 	viewStream
 	viewCommandPalette
+	viewPreview
 )
 
 type inputField int
@@ -48,52 +50,53 @@ const (
 )
 
 type Model struct {
-	width            int
-	height           int
-	mode             viewMode
-	collections      []*model.Collection
-	currentRequest   *model.Request
-	currentResponse  *model.Response
-	httpClient       *http.Client
-	storage          *storage.Storage
-	activeEnv        *model.Environment
-	selectedIndex    int
-	expandedIndex    int
-	headers          map[string]string
-	headerKeys       []string
-	selectedHeader   int
-	focusedInput     inputField
-	methodInput      textinput.Model
-	urlInput         textinput.Model
-	headerKeyInput   textinput.Model
-	headerValueInput textinput.Model
-	fileFieldInput   textinput.Model
-	filePathInput    textinput.Model
-	files            map[string]model.FileUpload
-	fileKeys         []string
-	selectedFile     int
-	bodyInput        textarea.Model
-	responseViewport viewport.Model
-	notification     notification.State
-	sidebarScroll    int
-	collectionInput  textinput.Model
-	requestNameInput textinput.Model
+	width                int
+	height               int
+	mode                 viewMode
+	collections          []*model.Collection
+	currentRequest       *model.Request
+	currentResponse      *model.Response
+	httpClient           *http.Client
+	storage              *storage.Storage
+	activeEnv            *model.Environment
+	selectedIndex        int
+	expandedIndex        int
+	headers              map[string]string
+	headerKeys           []string
+	selectedHeader       int
+	focusedInput         inputField
+	methodInput          textinput.Model
+	urlInput             textinput.Model
+	headerKeyInput       textinput.Model
+	headerValueInput     textinput.Model
+	fileFieldInput       textinput.Model
+	filePathInput        textinput.Model
+	files                map[string]model.FileUpload
+	fileKeys             []string
+	selectedFile         int
+	bodyInput            textarea.Model
+	responseViewport     viewport.Model
+	notification         notification.State
+	sidebarScroll        int
+	collectionInput      textinput.Model
+	requestNameInput     textinput.Model
 	showCreateCollection bool
-	showSaveRequest bool
-	metricsCollector *metrics.Collector
-	streamClient        protocol2.StreamHandler
-	streamMessages      []model.StreamMessage
-	streamActive        bool
-	streamInput         textinput.Model
-	commandPaletteInput textinput.Model
-	commandPaletteItems []string
-	commandPaletteIndex int
-	assertionResults    []model.AssertionResult
-	history            []*model.HistoryEntry
-	historyExpanded    bool
-	sidebarVisible     bool
+	showSaveRequest      bool
+	metricsCollector     *metrics.Collector
+	streamClient         protocol2.StreamHandler
+	streamMessages       []model.StreamMessage
+	streamActive         bool
+	streamInput          textinput.Model
+	commandPaletteInput  textinput.Model
+	commandPaletteItems  []string
+	commandPaletteIndex  int
+	assertionResults     []model.AssertionResult
+	history              []*model.HistoryEntry
+	historyExpanded      bool
+	sidebarVisible       bool
+	currentPreview       *model.PreviewResult
 	// prevKey stores last key for "gg" (go to top): first "g" sets it, second "g" within same session jumps to index 0.
-	prevKey            string
+	prevKey string
 }
 
 func NewModel(storagePath string) Model {
@@ -147,44 +150,44 @@ func NewModel(storagePath string) Model {
 	commandPaletteInput.Width = 60
 
 	return Model{
-		mode:             viewSidebar,
-		httpClient:       http.NewClient(),
-		storage:          storage.NewStorage(storagePath),
-		collections:      make([]*model.Collection, 0),
-		headers:          make(map[string]string),
-		headerKeys:       make([]string, 0),
-		selectedHeader:   -1,
-		focusedInput:     inputURL,
-		methodInput:      methodInput,
-		urlInput:         urlInput,
-		headerKeyInput:   headerKeyInput,
-		headerValueInput: headerValueInput,
-		fileFieldInput:   fileFieldInput,
-		filePathInput:    filePathInput,
-		files:            make(map[string]model.FileUpload),
-		fileKeys:         make([]string, 0),
-		selectedFile:     -1,
-		bodyInput:        bodyInput,
-		responseViewport: responseViewport,
-		notification:     notification.New(),
-		selectedIndex:    0,
-		expandedIndex:    -1,
-		sidebarScroll:    0,
-		collectionInput:  collectionInput,
-		requestNameInput: requestNameInput,
+		mode:                 viewSidebar,
+		httpClient:           http.NewClient(),
+		storage:              storage.NewStorage(storagePath),
+		collections:          make([]*model.Collection, 0),
+		headers:              make(map[string]string),
+		headerKeys:           make([]string, 0),
+		selectedHeader:       -1,
+		focusedInput:         inputURL,
+		methodInput:          methodInput,
+		urlInput:             urlInput,
+		headerKeyInput:       headerKeyInput,
+		headerValueInput:     headerValueInput,
+		fileFieldInput:       fileFieldInput,
+		filePathInput:        filePathInput,
+		files:                make(map[string]model.FileUpload),
+		fileKeys:             make([]string, 0),
+		selectedFile:         -1,
+		bodyInput:            bodyInput,
+		responseViewport:     responseViewport,
+		notification:         notification.New(),
+		selectedIndex:        0,
+		expandedIndex:        -1,
+		sidebarScroll:        0,
+		collectionInput:      collectionInput,
+		requestNameInput:     requestNameInput,
 		showCreateCollection: false,
-		showSaveRequest: false,
-		metricsCollector: metrics.NewCollector(100),
-		streamMessages:   make([]model.StreamMessage, 0),
-		streamActive:     false,
-		streamInput:      streamInput,
-		commandPaletteInput: commandPaletteInput,
-		commandPaletteItems: make([]string, 0),
-		commandPaletteIndex: 0,
-		assertionResults:    make([]model.AssertionResult, 0),
-		history:            make([]*model.HistoryEntry, 0),
-		historyExpanded:    true,
-		sidebarVisible:     true,
+		showSaveRequest:      false,
+		metricsCollector:     metrics.NewCollector(100),
+		streamMessages:       make([]model.StreamMessage, 0),
+		streamActive:         false,
+		streamInput:          streamInput,
+		commandPaletteInput:  commandPaletteInput,
+		commandPaletteItems:  make([]string, 0),
+		commandPaletteIndex:  0,
+		assertionResults:     make([]model.AssertionResult, 0),
+		history:              make([]*model.HistoryEntry, 0),
+		historyExpanded:      true,
+		sidebarVisible:       true,
 	}
 }
 
@@ -326,18 +329,18 @@ func (m *Model) View() string {
 	if m.sidebarVisible {
 		sidebarView = render.Sidebar(sidebarWidth, contentHeight, m.mode == viewSidebar, m.collections, m.selectedIndex, m.expandedIndex, m.history, m.historyExpanded)
 	}
-	
+
 	var mainView string
-	
+
 	if m.mode == viewDashboard {
 		stats := m.metricsCollector.GetStats()
 		recent := m.metricsCollector.GetRecent(20)
-		
+
 		durations := make([]time.Duration, len(recent))
 		for i, r := range recent {
 			durations[i] = r.Duration
 		}
-		
+
 		dashStats := render.DashboardStats{
 			TotalRequests:  stats.TotalRequests,
 			SuccessCount:   stats.SuccessCount,
@@ -349,10 +352,10 @@ func (m *Model) View() string {
 			Sparkline:      render.Sparkline(durations, mainWidth-20),
 			SuccessRateBar: render.SuccessRateBar(stats.SuccessCount, stats.TotalRequests, mainWidth-20),
 		}
-		
+
 		mainView = render.Dashboard(mainWidth, contentHeight, dashStats)
 	}
-	
+
 	if m.mode == viewStream {
 		protocol := "WebSocket"
 		if m.streamClient != nil {
@@ -367,7 +370,7 @@ func (m *Model) View() string {
 			m.streamInput,
 		)
 	}
-	
+
 	if m.mode == viewResponse && m.currentResponse != nil {
 		responseView := render.Response(mainWidth, contentHeight, m.mode == viewResponse, m.currentResponse, &m.responseViewport)
 		if len(m.assertionResults) > 0 {
@@ -382,8 +385,12 @@ func (m *Model) View() string {
 	if m.mode == viewCommandPalette {
 		mainView = render.CommandPalette(mainWidth, contentHeight, m.commandPaletteInput, m.commandPaletteItems, m.commandPaletteIndex)
 	}
-	
-	if m.mode != viewResponse && m.mode != viewDashboard && m.mode != viewStream && m.mode != viewCommandPalette {
+
+	if m.mode == viewPreview {
+		mainView = render.Preview(mainWidth, contentHeight, m.currentPreview)
+	}
+
+	if m.mode != viewResponse && m.mode != viewDashboard && m.mode != viewStream && m.mode != viewCommandPalette && m.mode != viewPreview {
 		panelInputs := render.PanelInputs{
 			MethodInput:      m.methodInput,
 			URLInput:         m.urlInput,
@@ -396,6 +403,8 @@ func (m *Model) View() string {
 			SelectedHeader:   m.selectedHeader,
 			FileKeys:         m.fileKeys,
 			SelectedFile:     m.selectedFile,
+			Assertions:       m.renderAssertionList(),
+			Extractors:       m.renderExtractorList(),
 		}
 		mainView = render.Panel(mainWidth, contentHeight, m.mode == viewPanel, m.headers, panelInputs)
 	}
@@ -430,6 +439,8 @@ func (m *Model) statusMode() string {
 		return "dashboard"
 	case viewCommandPalette:
 		return "palette"
+	case viewPreview:
+		return "preview"
 	}
 	return ""
 }
@@ -520,7 +531,7 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.prevKey = ""
 		m.unfocusAllInputs()
-		if m.mode == viewResponse {
+		if m.mode == viewResponse || m.mode == viewPreview {
 			m.mode = viewSidebar
 		}
 		return m, nil
@@ -633,6 +644,12 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sidebarVisible = !m.sidebarVisible
 		m.updateDimensions()
 		return m, nil
+
+	case "p":
+		m.prevKey = ""
+		m.currentPreview = m.buildPreview()
+		m.mode = viewPreview
+		return m, nil
 	}
 
 	m.prevKey = ""
@@ -696,6 +713,11 @@ func (m *Model) handleTabNavigation() *Model {
 	}
 
 	if m.mode == viewStream {
+		m.mode = viewSidebar
+		return m
+	}
+
+	if m.mode == viewPreview {
 		m.mode = viewSidebar
 		return m
 	}
@@ -1066,6 +1088,29 @@ func (m *Model) executeCurrentRequest() tea.Cmd {
 	}
 
 	return command.Execute(m.httpClient, req, m.activeEnv)
+}
+
+func (m *Model) buildPreview() *model.PreviewResult {
+	req := &model.Request{
+		Name:    "",
+		Method:  m.methodInput.Value(),
+		URL:     m.urlInput.Value(),
+		Headers: m.headers,
+		Body:    m.bodyInput.Value(),
+		Files:   make([]model.FileUpload, 0),
+	}
+	for _, key := range m.fileKeys {
+		if file, ok := m.files[key]; ok {
+			req.Files = append(req.Files, file)
+		}
+	}
+	if m.currentRequest != nil {
+		req.Name = m.currentRequest.Name
+		req.Query = m.currentRequest.Query
+		req.Assertions = m.currentRequest.Assertions
+		req.Extractors = m.currentRequest.Extractors
+	}
+	return http.PreviewRequest(req, m.activeEnv, nil)
 }
 
 func (m *Model) handleStreamInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1460,6 +1505,28 @@ func convertStreamMessages(msgs []model.StreamMessage) []render.StreamMessage {
 	return result
 }
 
+func (m *Model) renderAssertionList() []string {
+	if m.currentRequest == nil || len(m.currentRequest.Assertions) == 0 {
+		return nil
+	}
+	items := make([]string, 0, len(m.currentRequest.Assertions))
+	for idx, assertion := range m.currentRequest.Assertions {
+		items = append(items, fmt.Sprintf("%d. %s %s %s", idx, assertion.Type, assertion.Operator, assertion.Value))
+	}
+	return items
+}
+
+func (m *Model) renderExtractorList() []string {
+	if m.currentRequest == nil || len(m.currentRequest.Extractors) == 0 {
+		return nil
+	}
+	items := make([]string, 0, len(m.currentRequest.Extractors))
+	for idx, extractor := range m.currentRequest.Extractors {
+		items = append(items, fmt.Sprintf("%d. %s %s -> %s", idx, extractor.Type, extractor.Source, extractor.Target))
+	}
+	return items
+}
+
 func (m *Model) buildCommandPaletteItems() {
 	m.commandPaletteItems = make([]string, 0)
 
@@ -1633,4 +1700,3 @@ func (m *Model) loadHistoryEntry(entry *model.HistoryEntry) {
 	}
 	m.bodyInput.SetValue(entry.Body)
 }
-
