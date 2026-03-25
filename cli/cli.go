@@ -40,12 +40,20 @@ func Run(args []string) int {
 		return cmd.RunEnvironment(ctx, subArgs)
 	case "import":
 		return cmd.RunImport(ctx, subArgs)
+	case "export":
+		return cmd.RunExport(ctx, subArgs)
 	case "curl":
 		return cmd.RunCurl(ctx, subArgs)
 	case "run":
 		return cmd.RunRunner(ctx, subArgs)
 	case "stats":
 		return cmd.RunStats(ctx, subArgs)
+	case "config":
+		return cmd.RunConfig(ctx, subArgs)
+	case "doctor":
+		return cmd.RunDoctor(ctx, subArgs)
+	case "completion":
+		return cmd.RunCompletion(subArgs)
 	case "update":
 		return cmd.RunUpdate()
 	case "help", "-h", "--help":
@@ -74,9 +82,13 @@ Commands:
   collection, col  Manage collections
   env, environment Manage environments
   import           Import Postman collection
+  export           Export collection as OpenAPI or HAR
   curl             Parse/convert cURL commands
   run              Run collection with assertions
   stats            Show request statistics
+  config           Manage local config
+  doctor           Run local diagnostics
+  completion       Print shell completions
   update           Update raco to latest release
   help             Show this help
   version          Show version

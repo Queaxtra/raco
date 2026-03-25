@@ -40,6 +40,14 @@ func RunCollection(ctx *Context, args []string) int {
 		return collectionAddRequest(ctx, store, subArgs)
 	case "preview":
 		return collectionPreview(ctx, store, subArgs)
+	case "hooks":
+		return collectionHooks(store, subArgs)
+	case "tag":
+		return collectionTags(store, subArgs)
+	case "history":
+		return collectionHistory(ctx.StoragePath, subArgs)
+	case "diff":
+		return collectionDiff(ctx.StoragePath, subArgs)
 	case "add-assertion":
 		return collectionAddAssertion(store, subArgs)
 	case "list-assertions":
@@ -69,6 +77,10 @@ Actions:
   delete, rm <id>       Delete collection
   add, add-request      Add request to collection
   preview               Preview a saved request
+  hooks                 Manage collection setup/teardown hooks
+  tag                   Manage collection or request tags
+  history               List collection revision history
+  diff                  Compare two saved revisions
   add-assertion         Add assertion to a request
   list-assertions       List request assertions
   remove-assertion      Remove request assertion by index
@@ -202,6 +214,10 @@ func collectionDelete(storagePath string, args []string) int {
 	}
 
 	expectedDir := filepath.Join(storagePath, "collections")
+	resolvedDir, dirErr := filepath.EvalSymlinks(expectedDir)
+	if dirErr == nil {
+		expectedDir = resolvedDir
+	}
 	if !util.IsPathContained(resolvedPath, expectedDir) {
 		fmt.Fprintln(os.Stderr, "Error: invalid path")
 		return 1
@@ -263,27 +279,42 @@ func collectionAddRequest(ctx *Context, store *storage.Storage, args []string) i
 		requestArgs = append(requestArgs, args[i])
 	}
 
-	method, url, body, headers, query, timeoutSeconds, err := ParseRequestArgsPublic(requestArgs)
+	cfg, err := parseRequestArgs(requestArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
 
 	if name == "" {
-		name = method + " " + url
+		name = cfg.Method + " " + cfg.URL
 	}
 
 	req := &model.Request{
 		ID:             uuid.New().String(),
 		Name:           name,
-		Method:         strings.ToUpper(method),
-		URL:            url,
-		Headers:        headers,
-		Query:          query,
-		Body:           body,
-		TimeoutSeconds: timeoutSeconds,
+		Method:         strings.ToUpper(cfg.Method),
+		URL:            cfg.URL,
+		Headers:        cfg.Headers,
+		Query:          cfg.Query,
+		Body:           cfg.Body,
+		BodyFile:       cfg.BodyFile,
+		Files:          cfg.Files,
+		TimeoutSeconds: cfg.TimeoutSeconds,
 		CreatedAt:      time.Now(),
 		CollectionID:   colID,
+		CookieJar:      resolveCookieJarPath(cfg.CookieJar),
+		Transport: model.TransportConfig{
+			ProxyURL:        cfg.ProxyURL,
+			CAFile:          cfg.CAFile,
+			CertFile:        cfg.CertFile,
+			KeyFile:         cfg.KeyFile,
+			RateLimitPerMin: cfg.RateLimit,
+		},
+		Retry: model.RetryPolicy{
+			MaxAttempts: cfg.RetryMax,
+			BaseDelayMS: cfg.RetryBaseMS,
+			MaxDelayMS:  cfg.RetryMaxMS,
+		},
 	}
 
 	col.Requests = append(col.Requests, req)
@@ -494,11 +525,11 @@ func validateAssertionConfig(assertion model.Assertion) error {
 		if assertion.Field != "" {
 			return fmt.Errorf("status_code assertions must not define field")
 		}
-	case model.AssertJSONPath, model.AssertHeader:
+	case model.AssertJSONPath, model.AssertHeader, model.AssertExists, model.AssertNotExists, model.AssertStartsWith, model.AssertEndsWith, model.AssertGreater, model.AssertLess:
 		if assertion.Field == "" {
 			return fmt.Errorf("%s assertions require field", assertion.Type)
 		}
-	case model.AssertRegex:
+	case model.AssertRegex, model.AssertJSONSchema, model.AssertLatencyMS, model.AssertSnapshot:
 		if len(assertion.Value) == 0 || len(assertion.Value) > 4096 {
 			return fmt.Errorf("regex assertion requires value up to 4KB")
 		}
@@ -520,14 +551,15 @@ func validateExtractorConfig(extractor model.Extractor) error {
 		return fmt.Errorf("invalid extractor target: %s", extractor.Target)
 	}
 	switch extractor.Type {
-	case model.ExtractJSONPath, model.ExtractHeader:
+	case model.ExtractJSONPath, model.ExtractHeader, model.ExtractCookie:
 		if extractor.Source == "" {
 			return fmt.Errorf("%s extractor requires source", extractor.Type)
 		}
-	case model.ExtractRegex:
+	case model.ExtractRegex, model.ExtractRegexKey:
 		if extractor.Pattern == "" {
 			return fmt.Errorf("regex extractor requires pattern")
 		}
+	case model.ExtractStatus, model.ExtractBody:
 	default:
 		return fmt.Errorf("unsupported extractor type: %s", extractor.Type)
 	}

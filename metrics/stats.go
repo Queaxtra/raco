@@ -12,5 +12,9 @@ type Stats struct {
 	AverageDuration time.Duration
 	MinDuration     time.Duration
 	MaxDuration     time.Duration
+	P50Duration     time.Duration
+	P95Duration     time.Duration
+	P99Duration     time.Duration
+	ProtocolCounts  map[string]int
 	LastUpdated     time.Time
 }

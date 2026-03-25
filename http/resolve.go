@@ -1,9 +1,12 @@
 package http
 
 import (
+	"fmt"
+	"os"
 	"raco/model"
 	"raco/util"
 	"sort"
+	"strings"
 )
 
 // VariableProvider exposes resolved variables without coupling request resolution
@@ -38,6 +41,12 @@ func ResolveRequest(req *model.Request, env VariableProvider) *model.Request {
 		CollectionID:   req.CollectionID,
 		Assertions:     append([]model.Assertion(nil), req.Assertions...),
 		Extractors:     append([]model.Extractor(nil), req.Extractors...),
+	}
+	if resolved.Body == "" && req.BodyFile != "" {
+		body, err := loadBodyFile(req.BodyFile)
+		if err == nil {
+			resolved.Body = ReplaceEnvVars(body, env)
+		}
 	}
 	for key, value := range req.Headers {
 		resolved.Headers[key] = ReplaceEnvVars(value, env)
@@ -116,4 +125,26 @@ func collectSecretKeys(values map[string]string, secrets SecretProvider) []strin
 	}
 	sort.Strings(out)
 	return out
+}
+
+func loadBodyFile(path string) (string, error) {
+	cleanPath := strings.TrimSpace(path)
+	if cleanPath == "" {
+		return "", os.ErrInvalid
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	resolvedPath, err := util.ResolveContainedPath(cwd, cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("body file path is invalid: %w", err)
+	}
+	// Request body files are intentionally capped to keep both memory usage and
+	// accidental secret sprawl under control.
+	data, err := util.ReadFileBounded(resolvedPath, 1024*1024)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

@@ -59,7 +59,7 @@ func CommandPalette(width, height int, input textinput.Model, items []string, se
 	}
 
 	content.WriteString("\n")
-	help := "↑/↓: Navigate • Enter: Select • Esc: Close"
+	help := "j/k or ↑/↓: Navigate • Ctrl+U/D: Page • gg/G: Top/Bottom • Enter: Select • Esc: Close"
 	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(help))
 
 	return paletteStyle.

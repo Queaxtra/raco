@@ -16,6 +16,8 @@ import (
 	"raco/ui/func/render/modal"
 	"raco/ui/notification"
 	"raco/util"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -98,6 +100,15 @@ type Model struct {
 	// prevKey stores last key for "gg" (go to top): first "g" sets it, second "g" within same session jumps to index 0.
 	prevKey string
 }
+
+const (
+	paletteActionDashboard     = "Action: Open Dashboard"
+	paletteActionPreview       = "Action: Open Preview"
+	paletteActionCreate        = "Action: Create Collection"
+	paletteActionSave          = "Action: Save Request"
+	paletteActionToggleSidebar = "Action: Toggle Sidebar"
+	paletteActionToggleHistory = "Action: Toggle History"
+)
 
 func NewModel(storagePath string) Model {
 	methodInput := textinput.New()
@@ -342,15 +353,19 @@ func (m *Model) View() string {
 		}
 
 		dashStats := render.DashboardStats{
-			TotalRequests:  stats.TotalRequests,
-			SuccessCount:   stats.SuccessCount,
-			FailureCount:   stats.FailureCount,
-			SuccessRate:    stats.SuccessRate,
-			AvgDuration:    stats.AverageDuration.String(),
-			MinDuration:    stats.MinDuration.String(),
-			MaxDuration:    stats.MaxDuration.String(),
-			Sparkline:      render.Sparkline(durations, mainWidth-20),
-			SuccessRateBar: render.SuccessRateBar(stats.SuccessCount, stats.TotalRequests, mainWidth-20),
+			TotalRequests:   stats.TotalRequests,
+			SuccessCount:    stats.SuccessCount,
+			FailureCount:    stats.FailureCount,
+			SuccessRate:     stats.SuccessRate,
+			AvgDuration:     stats.AverageDuration.String(),
+			MinDuration:     stats.MinDuration.String(),
+			MaxDuration:     stats.MaxDuration.String(),
+			P50Duration:     stats.P50Duration.String(),
+			P95Duration:     stats.P95Duration.String(),
+			P99Duration:     stats.P99Duration.String(),
+			Sparkline:       render.Sparkline(durations, mainWidth-20),
+			SuccessRateBar:  render.SuccessRateBar(stats.SuccessCount, stats.TotalRequests, mainWidth-20),
+			ProtocolSummary: formatProtocolSummary(stats.ProtocolCounts),
 		}
 
 		mainView = render.Dashboard(mainWidth, contentHeight, dashStats)
@@ -422,6 +437,22 @@ func (m *Model) View() string {
 	}
 
 	return baseView
+}
+
+func formatProtocolSummary(protocolCounts map[string]int) string {
+	if len(protocolCounts) == 0 {
+		return "No data"
+	}
+	keys := make([]string, 0, len(protocolCounts))
+	for key := range protocolCounts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, protocolCounts[key]))
+	}
+	return strings.Join(parts, "  ")
 }
 
 // statusMode returns the current view name for the status bar (sidebar, request, response, stream, dashboard, palette).
@@ -507,6 +538,14 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.responseViewport, cmd = m.responseViewport.Update(msg)
 			return m, cmd
 		}
+		if msg.String() == "ctrl+d" {
+			m.responseViewport.HalfPageDown()
+			return m, nil
+		}
+		if msg.String() == "ctrl+u" {
+			m.responseViewport.HalfPageUp()
+			return m, nil
+		}
 	}
 
 	return m.handleGlobalKeys(msg)
@@ -582,8 +621,7 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "g":
 		if m.prevKey == "g" {
 			m.prevKey = ""
-			m.selectedIndex = 0
-			return m, nil
+			return m.handleGoFirst(), nil
 		}
 		m.prevKey = "g"
 		return m, nil
@@ -606,7 +644,17 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+d":
 		m.prevKey = ""
+		if m.mode == viewSidebar || m.mode == viewCommandPalette || m.mode == viewResponse {
+			return m.handlePageDown(), nil
+		}
 		return m.handleHeaderDelete()
+
+	case "ctrl+u":
+		m.prevKey = ""
+		if m.mode == viewSidebar || m.mode == viewCommandPalette || m.mode == viewResponse {
+			return m.handlePageUp(), nil
+		}
+		return m, nil
 
 	case "ctrl+n":
 		m.prevKey = ""
@@ -658,10 +706,33 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleGoLast moves sidebar selection to the last visible item (vim G).
 func (m *Model) handleGoLast() *Model {
+	if m.mode == viewResponse {
+		m.responseViewport.GotoBottom()
+		return m
+	}
+	if m.mode == viewCommandPalette {
+		if len(m.commandPaletteItems) > 0 {
+			m.commandPaletteIndex = len(m.commandPaletteItems) - 1
+		}
+		return m
+	}
 	total := helper.TotalSidebarItems(m.collections, m.expandedIndex, m.history, m.historyExpanded)
 	if total > 0 {
 		m.selectedIndex = total - 1
 	}
+	return m
+}
+
+func (m *Model) handleGoFirst() *Model {
+	if m.mode == viewResponse {
+		m.responseViewport.GotoTop()
+		return m
+	}
+	if m.mode == viewCommandPalette {
+		m.commandPaletteIndex = 0
+		return m
+	}
+	m.selectedIndex = 0
 	return m
 }
 
@@ -748,6 +819,65 @@ func (m *Model) handleDownNavigation() *Model {
 		}
 	}
 	return m
+}
+
+func (m *Model) handlePageDown() *Model {
+	if m.mode == viewResponse {
+		m.responseViewport.HalfPageDown()
+		return m
+	}
+	if m.mode == viewCommandPalette {
+		step := 10
+		if len(m.commandPaletteItems) == 0 {
+			return m
+		}
+		m.commandPaletteIndex += step
+		if m.commandPaletteIndex >= len(m.commandPaletteItems) {
+			m.commandPaletteIndex = len(m.commandPaletteItems) - 1
+		}
+		return m
+	}
+	if m.mode == viewSidebar {
+		totalItems := helper.TotalSidebarItems(m.collections, m.expandedIndex, m.history, m.historyExpanded)
+		if totalItems == 0 {
+			return m
+		}
+		m.selectedIndex += m.sidebarPageStep()
+		if m.selectedIndex >= totalItems {
+			m.selectedIndex = totalItems - 1
+		}
+	}
+	return m
+}
+
+func (m *Model) handlePageUp() *Model {
+	if m.mode == viewResponse {
+		m.responseViewport.HalfPageUp()
+		return m
+	}
+	if m.mode == viewCommandPalette {
+		step := 10
+		m.commandPaletteIndex -= step
+		if m.commandPaletteIndex < 0 {
+			m.commandPaletteIndex = 0
+		}
+		return m
+	}
+	if m.mode == viewSidebar {
+		m.selectedIndex -= m.sidebarPageStep()
+		if m.selectedIndex < 0 {
+			m.selectedIndex = 0
+		}
+	}
+	return m
+}
+
+func (m *Model) sidebarPageStep() int {
+	step := m.height - 8
+	if step < 5 {
+		step = 5
+	}
+	return step
 }
 
 func (m *Model) handleUpNavigation() *Model {
@@ -1530,6 +1660,15 @@ func (m *Model) renderExtractorList() []string {
 func (m *Model) buildCommandPaletteItems() {
 	m.commandPaletteItems = make([]string, 0)
 
+	m.commandPaletteItems = append(m.commandPaletteItems,
+		paletteActionDashboard,
+		paletteActionPreview,
+		paletteActionCreate,
+		paletteActionSave,
+		paletteActionToggleSidebar,
+		paletteActionToggleHistory,
+	)
+
 	for _, col := range m.collections {
 		if col == nil {
 			continue
@@ -1582,6 +1721,29 @@ func (m *Model) handleCommandPaletteInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if msg.String() == "ctrl+d" {
+		return m.handlePageDown(), nil
+	}
+
+	if msg.String() == "ctrl+u" {
+		return m.handlePageUp(), nil
+	}
+
+	if msg.String() == "G" {
+		return m.handleGoLast(), nil
+	}
+
+	if msg.String() == "g" {
+		if m.prevKey == "g" {
+			m.prevKey = ""
+			return m.handleGoFirst(), nil
+		}
+		m.prevKey = "g"
+		return m, nil
+	}
+
+	m.prevKey = ""
+
 	var cmd tea.Cmd
 	m.commandPaletteInput, cmd = m.commandPaletteInput.Update(msg)
 
@@ -1621,6 +1783,10 @@ func (m *Model) selectCommandPaletteItem(index int) {
 		return
 	}
 
+	if m.applyPaletteAction(m.commandPaletteItems[index]) {
+		return
+	}
+
 	selectedIdx := 0
 	for _, col := range m.collections {
 		if col == nil {
@@ -1637,6 +1803,34 @@ func (m *Model) selectCommandPaletteItem(index int) {
 			selectedIdx++
 		}
 	}
+}
+
+func (m *Model) applyPaletteAction(item string) bool {
+	switch item {
+	case paletteActionDashboard:
+		m.mode = viewDashboard
+		return true
+	case paletteActionPreview:
+		m.currentPreview = m.buildPreview()
+		m.mode = viewPreview
+		return true
+	case paletteActionCreate:
+		m.showCreateCollection = true
+		m.collectionInput.Focus()
+		return true
+	case paletteActionSave:
+		m.showSaveRequest = true
+		m.requestNameInput.Focus()
+		return true
+	case paletteActionToggleSidebar:
+		m.sidebarVisible = !m.sidebarVisible
+		m.updateDimensions()
+		return true
+	case paletteActionToggleHistory:
+		m.historyExpanded = !m.historyExpanded
+		return true
+	}
+	return false
 }
 
 func (m *Model) addHistoryEntry() {

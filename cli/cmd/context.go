@@ -20,7 +20,7 @@ func (c *Context) Storage() *storage.Storage {
 // be used, while plain-only environments still work without extra OS dependencies.
 func (c *Context) ResolveEnvironment(name string) (*model.ResolvedEnvironment, error) {
 	store := c.Storage()
-	env, err := store.LoadEnvironment(name)
+	env, err := store.LoadMergedEnvironment(name)
 	if err != nil {
 		return nil, err
 	}

@@ -8,7 +8,7 @@ import (
 
 // Sidebar renders the left panel: collections (expandable), their requests, and history.
 // selectedIndex is the linear index over all visible items; expandedIndex is which collection is open.
-// Help text at the bottom reflects vim keys (j/k, gg/G, Enter, h/l, e, w).
+// Help text at the bottom reflects vim keys (j/k, ctrl+u/d, gg/G, Enter, h/l, e, w).
 func Sidebar(width, height int, isActive bool, collections []*model.Collection, selectedIndex, expandedIndex int, history []*model.HistoryEntry, historyExpanded bool) string {
 	if collections == nil {
 		collections = []*model.Collection{}
@@ -130,7 +130,7 @@ func GetMethodIcon(method string) string {
 // GetSidebarHelp returns one-line hint: vim keys when sidebar is focused, focus panel hint otherwise.
 func GetSidebarHelp(isActive bool) string {
 	if isActive {
-		return "j/k nav  gg/G top/bot  Enter open  h/l focus  e send  w save"
+		return "j/k nav  Ctrl+U/D page  gg/G top/bot  Enter open  h/l focus  e send  w save"
 	}
 	return "Tab or l → focus panel"
 }

@@ -15,6 +15,15 @@ const (
 	AssertJSONPath   AssertionType = "jsonpath"
 	AssertRegex      AssertionType = "regex"
 	AssertHeader     AssertionType = "header"
+	AssertExists     AssertionType = "exists"
+	AssertNotExists  AssertionType = "not_exists"
+	AssertStartsWith AssertionType = "starts_with"
+	AssertEndsWith   AssertionType = "ends_with"
+	AssertGreater    AssertionType = "greater_than"
+	AssertLess       AssertionType = "less_than"
+	AssertJSONSchema AssertionType = "json_schema"
+	AssertLatencyMS  AssertionType = "latency_ms"
+	AssertSnapshot   AssertionType = "snapshot"
 )
 
 type Assertion struct {
@@ -53,6 +62,33 @@ func ValidateAssertion(assertion Assertion, response *Response) AssertionResult 
 
 	if assertion.Type == AssertHeader {
 		return validateHeader(assertion, response)
+	}
+	if assertion.Type == AssertExists {
+		return validateExists(assertion, response)
+	}
+	if assertion.Type == AssertNotExists {
+		return validateNotExists(assertion, response)
+	}
+	if assertion.Type == AssertStartsWith {
+		return validateStringAssertion(assertion, response, "starts_with")
+	}
+	if assertion.Type == AssertEndsWith {
+		return validateStringAssertion(assertion, response, "ends_with")
+	}
+	if assertion.Type == AssertGreater {
+		return validateNumericAssertion(assertion, response, "greater_than")
+	}
+	if assertion.Type == AssertLess {
+		return validateNumericAssertion(assertion, response, "less_than")
+	}
+	if assertion.Type == AssertJSONSchema {
+		return validateJSONSchema(assertion, response)
+	}
+	if assertion.Type == AssertLatencyMS {
+		return validateLatency(assertion, response)
+	}
+	if assertion.Type == AssertSnapshot {
+		return validateSnapshot(assertion, response)
 	}
 
 	return AssertionResult{
@@ -94,6 +130,9 @@ func validateStatusCode(assertion Assertion, response *Response) AssertionResult
 			Passed:    false,
 			Message:   fmt.Sprintf("Status code should not be %s", expected),
 		}
+	}
+	if assertion.Operator == "greater_than" || assertion.Operator == "less_than" {
+		return compareNumericResult(assertion, int64(response.StatusCode), assertion.Operator, assertion.Value, "Status code")
 	}
 
 	return AssertionResult{
@@ -160,6 +199,15 @@ func validateJSONPath(assertion Assertion, response *Response) AssertionResult {
 			Passed:    false,
 			Message:   fmt.Sprintf("Value does not contain %s", assertion.Value),
 		}
+	}
+	if assertion.Operator == "starts_with" {
+		return compareStringResult(assertion, valueStr, "starts_with", assertion.Value, fmt.Sprintf("Value at %s", assertion.Field))
+	}
+	if assertion.Operator == "ends_with" {
+		return compareStringResult(assertion, valueStr, "ends_with", assertion.Value, fmt.Sprintf("Value at %s", assertion.Field))
+	}
+	if assertion.Operator == "greater_than" || assertion.Operator == "less_than" {
+		return compareNumericResult(assertion, parseNumericValue(valueStr), assertion.Operator, assertion.Value, fmt.Sprintf("Value at %s", assertion.Field))
 	}
 
 	return AssertionResult{
@@ -268,12 +316,160 @@ func validateHeader(assertion Assertion, response *Response) AssertionResult {
 			Message:   fmt.Sprintf("Header does not contain %s", assertion.Value),
 		}
 	}
+	if assertion.Operator == "starts_with" {
+		return compareStringResult(assertion, value, "starts_with", assertion.Value, fmt.Sprintf("Header %s", assertion.Field))
+	}
+	if assertion.Operator == "ends_with" {
+		return compareStringResult(assertion, value, "ends_with", assertion.Value, fmt.Sprintf("Header %s", assertion.Field))
+	}
+	if assertion.Operator == "greater_than" || assertion.Operator == "less_than" {
+		return compareNumericResult(assertion, parseNumericValue(value), assertion.Operator, assertion.Value, fmt.Sprintf("Header %s", assertion.Field))
+	}
 
 	return AssertionResult{
 		Assertion: assertion,
 		Passed:    false,
 		Message:   "Invalid operator for header",
 	}
+}
+
+func validateExists(assertion Assertion, response *Response) AssertionResult {
+	if assertion.Field == "" {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "exists requires field"}
+	}
+	if response.Headers != nil {
+		if _, ok := response.Headers[assertion.Field]; ok {
+			return AssertionResult{Assertion: assertion, Passed: true, Message: fmt.Sprintf("Field %s exists", assertion.Field)}
+		}
+	}
+	if response.Body != "" {
+		var data interface{}
+		if err := json.Unmarshal([]byte(response.Body), &data); err == nil {
+			if extractJSONPath(data, assertion.Field) != nil {
+				return AssertionResult{Assertion: assertion, Passed: true, Message: fmt.Sprintf("Field %s exists", assertion.Field)}
+			}
+		}
+	}
+	return AssertionResult{Assertion: assertion, Passed: false, Message: fmt.Sprintf("Field %s does not exist", assertion.Field)}
+}
+
+func validateNotExists(assertion Assertion, response *Response) AssertionResult {
+	result := validateExists(assertion, response)
+	result.Passed = !result.Passed
+	if result.Passed {
+		result.Message = fmt.Sprintf("Field %s does not exist", assertion.Field)
+	}
+	if !result.Passed {
+		result.Message = fmt.Sprintf("Field %s exists", assertion.Field)
+	}
+	return result
+}
+
+func validateStringAssertion(assertion Assertion, response *Response, mode string) AssertionResult {
+	if assertion.Field == "" {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "string assertion requires field"}
+	}
+	headerResult := validateHeader(Assertion{Type: AssertHeader, Field: assertion.Field, Operator: mode, Value: assertion.Value}, response)
+	if headerResult.Passed {
+		headerResult.Assertion = assertion
+		return headerResult
+	}
+	return validateJSONPath(Assertion{Type: AssertJSONPath, Field: assertion.Field, Operator: mode, Value: assertion.Value}, response)
+}
+
+func validateNumericAssertion(assertion Assertion, response *Response, mode string) AssertionResult {
+	if assertion.Field == "" {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "numeric assertion requires field"}
+	}
+	headerResult := validateHeader(Assertion{Type: AssertHeader, Field: assertion.Field, Operator: mode, Value: assertion.Value}, response)
+	if headerResult.Passed {
+		headerResult.Assertion = assertion
+		return headerResult
+	}
+	return validateJSONPath(Assertion{Type: AssertJSONPath, Field: assertion.Field, Operator: mode, Value: assertion.Value}, response)
+}
+
+func validateJSONSchema(assertion Assertion, response *Response) AssertionResult {
+	if response.Body == "" {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "Response body is empty"}
+	}
+	var body interface{}
+	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "Response body is not valid JSON"}
+	}
+	var schema struct {
+		Type       string                 `json:"type"`
+		Required   []string               `json:"required"`
+		Properties map[string]interface{} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(assertion.Value), &schema); err != nil {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "Invalid JSON schema"}
+	}
+	objectBody, ok := body.(map[string]interface{})
+	if !ok {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "Body is not a JSON object"}
+	}
+	for _, key := range schema.Required {
+		if _, ok := objectBody[key]; !ok {
+			return AssertionResult{Assertion: assertion, Passed: false, Message: fmt.Sprintf("Required key missing: %s", key)}
+		}
+	}
+	return AssertionResult{Assertion: assertion, Passed: true, Message: "JSON schema matched"}
+}
+
+func validateLatency(assertion Assertion, response *Response) AssertionResult {
+	return compareNumericResult(assertion, response.Duration.Milliseconds(), assertion.Operator, assertion.Value, "Latency")
+}
+
+func validateSnapshot(assertion Assertion, response *Response) AssertionResult {
+	if response.Body == assertion.Value {
+		return AssertionResult{Assertion: assertion, Passed: true, Message: "Snapshot matched"}
+	}
+	return AssertionResult{Assertion: assertion, Passed: false, Message: "Snapshot mismatch"}
+}
+
+func compareStringResult(assertion Assertion, actual string, operator string, expected string, label string) AssertionResult {
+	if operator == "starts_with" {
+		if strings.HasPrefix(actual, expected) {
+			return AssertionResult{Assertion: assertion, Passed: true, Message: fmt.Sprintf("%s starts with %s", label, expected)}
+		}
+		return AssertionResult{Assertion: assertion, Passed: false, Message: fmt.Sprintf("%s does not start with %s", label, expected)}
+	}
+	if operator == "ends_with" {
+		if strings.HasSuffix(actual, expected) {
+			return AssertionResult{Assertion: assertion, Passed: true, Message: fmt.Sprintf("%s ends with %s", label, expected)}
+		}
+		return AssertionResult{Assertion: assertion, Passed: false, Message: fmt.Sprintf("%s does not end with %s", label, expected)}
+	}
+	return AssertionResult{Assertion: assertion, Passed: false, Message: "Invalid string operator"}
+}
+
+func compareNumericResult(assertion Assertion, actual int64, operator string, expected string, label string) AssertionResult {
+	expectedNumber, err := strconv.ParseInt(strings.TrimSpace(expected), 10, 64)
+	if err != nil {
+		return AssertionResult{Assertion: assertion, Passed: false, Message: "Invalid numeric expectation"}
+	}
+	if operator == "greater_than" {
+		if actual > expectedNumber {
+			return AssertionResult{Assertion: assertion, Passed: true, Message: fmt.Sprintf("%s is greater than %d", label, expectedNumber)}
+		}
+		return AssertionResult{Assertion: assertion, Passed: false, Message: fmt.Sprintf("%s is not greater than %d", label, expectedNumber)}
+	}
+	if operator == "less_than" {
+		if actual < expectedNumber {
+			return AssertionResult{Assertion: assertion, Passed: true, Message: fmt.Sprintf("%s is less than %d", label, expectedNumber)}
+		}
+		return AssertionResult{Assertion: assertion, Passed: false, Message: fmt.Sprintf("%s is not less than %d", label, expectedNumber)}
+	}
+	return AssertionResult{Assertion: assertion, Passed: false, Message: "Invalid numeric operator"}
+}
+
+func parseNumericValue(value string) int64 {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func extractJSONPath(data interface{}, path string) interface{} {

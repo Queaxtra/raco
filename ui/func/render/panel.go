@@ -129,5 +129,5 @@ func Panel(width, height int, isActive bool, headers map[string]string, inputs P
 
 // GetPanelHelp returns the one-line shortcut hint for the request panel (Tab, e, w, Ctrl+S/D/F/X).
 func GetPanelHelp() string {
-	return "Tab next  Shift+Tab prev  e send  w save  h/l method  Ctrl+S/D header  Ctrl+F/X file"
+	return "Tab next  Shift+Tab prev  e send  w save  h/l method  Ctrl+S/D header  Ctrl+F/X file  p preview"
 }

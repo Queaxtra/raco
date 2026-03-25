@@ -23,7 +23,7 @@ var (
 )
 
 // Response renders the HTTP response view: status line, duration, optional headers, scrollable body.
-// Body is formatted (JSON indented) and passed to responseViewport for j/k scrolling.
+// Body is formatted (JSON indented) and passed to responseViewport for vim-style scrolling.
 func Response(width, height int, isActive bool, response *model.Response, responseViewport *viewport.Model) string {
 	style := theme.Box(isActive).Width(width - 2).Height(height - 2)
 
@@ -55,6 +55,8 @@ func Response(width, height int, isActive bool, response *model.Response, respon
 	bodyContent := FormatResponseBody(response.Body)
 	responseViewport.SetContent(bodyContent)
 	content.WriteString(responseBodyStyle.Width(width - 8).Height(height - 16).Render(responseViewport.View()))
+	content.WriteString("\n\n")
+	content.WriteString(theme.Muted().Italic(true).Render("j/k scroll  Ctrl+U/D page  gg/G top/bot  h or Tab back"))
 
 	return style.Render(content.String())
 }

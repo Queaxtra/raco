@@ -42,6 +42,12 @@ func RunEnvironment(ctx *Context, args []string) int {
 		return environmentSet(store, subArgs)
 	case "set-secret":
 		return environmentSetSecret(store, subArgs)
+	case "set-parent":
+		return environmentSetParent(store, subArgs)
+	case "health":
+		return environmentHealth(ctx, store, subArgs)
+	case "rotate-secret":
+		return environmentRotateSecret(store, subArgs)
 	case "unset":
 		return environmentUnset(store, subArgs)
 	case "list-secrets":
@@ -64,6 +70,9 @@ Actions:
   delete, rm <name>       Delete environment
   set <name> <key=val>    Set plain variable in environment
   set-secret <name> <key> Set secret value in environment
+  set-parent <n> <p>      Set parent environment inheritance
+  health [name]           Show environment health details
+  rotate-secret <n> <k>   Rotate a secret value in secure storage
   unset <name> <key>      Remove variable from environment
   list-secrets <name>     List secret keys in environment
 
@@ -163,6 +172,10 @@ func environmentDelete(storagePath string, args []string) int {
 	}
 
 	expectedDir := filepath.Join(storagePath, "environments")
+	resolvedDir, dirErr := filepath.EvalSymlinks(expectedDir)
+	if dirErr == nil {
+		expectedDir = resolvedDir
+	}
 	if !util.IsPathContained(resolvedPath, expectedDir) {
 		fmt.Fprintln(os.Stderr, "Error: invalid path")
 		return 1

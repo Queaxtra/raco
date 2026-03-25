@@ -15,6 +15,7 @@ type RequestFilter struct {
 	ExactNames   []string
 	NameContains []string
 	Methods      []string
+	Tags         []string
 }
 
 // Config holds all execution-time options for a collection run.
@@ -27,6 +28,10 @@ type Config struct {
 	MaxParallel     int
 	RequestFilter   RequestFilter
 	EnvironmentName string
+	SnapshotDir     string
+	SnapshotUpdate  bool
+	FlakyRetries    int
+	Contracts       []string
 }
 
 // Result is the serializable run summary used by text, JSON, and JUnit outputs.
@@ -65,6 +70,7 @@ type RequestResult struct {
 	ErrorCategory  string            `json:"error_category,omitempty"`
 	RetriesUsed    int               `json:"retries_used"`
 	Warnings       []string          `json:"warnings,omitempty"`
+	FlakyRecovered bool              `json:"flaky_recovered,omitempty"`
 }
 
 // AssertionResult is a minimal, report-friendly view of assertion evaluation.
@@ -87,26 +93,71 @@ func Execute(cfg *Config) *Result {
 	}
 
 	client := http.NewClient()
-	filterEnabled := hasActiveFilters(cfg.RequestFilter)
+	plan, planErr := BuildExecutionPlan(cfg.Collection, cfg.RequestFilter)
+	if planErr != nil {
+		result.FailedCount = 1
+		result.FailureSummary = append(result.FailureSummary, planErr.Error())
+		result.FinishedAt = time.Now()
+		result.Duration = result.FinishedAt.Sub(startTime)
+		return result
+	}
 
 	for idx, req := range cfg.Collection.Requests {
-		selected := !filterEnabled || requestMatches(req, idx, cfg.RequestFilter)
-		if !selected {
-			result.RequestResults = append(result.RequestResults, RequestResult{
-				RequestRef: fmt.Sprintf("%d", idx),
-				Name:       req.Name,
-				Method:     req.Method,
-				URL:        req.URL,
-				Skipped:    true,
-				SkipReason: "filtered out",
-			})
-			result.SkippedCount++
-			result.SkippedByFilterCount++
+		if containsIndex(plan.OrderedIndices, idx) {
 			continue
 		}
+		if requestMatches(req, idx, cfg.RequestFilter, cfg.Collection.Tags) {
+			continue
+		}
+		result.RequestResults = append(result.RequestResults, RequestResult{
+			RequestRef: fmt.Sprintf("%d", idx),
+			Name:       req.Name,
+			Method:     req.Method,
+			URL:        req.URL,
+			Skipped:    true,
+			SkipReason: "filtered out",
+		})
+		result.SkippedCount++
+		result.SkippedByFilterCount++
+	}
 
+	for _, ref := range cfg.Collection.Hooks.Setup {
+		_, req, err := ResolveRequestRef(cfg.Collection, ref)
+		if err != nil {
+			result.RequestResults = append(result.RequestResults, RequestResult{
+				RequestRef: ref,
+				Name:       "setup",
+				Skipped:    true,
+				SkipReason: err.Error(),
+			})
+			result.FailedCount++
+			if cfg.StopOnFail {
+				result.FinishedAt = time.Now()
+				result.Duration = result.FinishedAt.Sub(startTime)
+				return result
+			}
+		}
+		if err == nil {
+			hookResult := executeRequest(client, -1, req, cfg.Environment, cfg.FailIfNoTests, cfg)
+			hookResult.RequestRef = ref
+			hookResult.Name = "[setup] " + req.Name
+			result.RequestResults = append(result.RequestResults, hookResult)
+			if !hookResult.Passed {
+				result.FailedCount++
+				result.FailureSummary = append(result.FailureSummary, hookResult.Name)
+				if cfg.StopOnFail {
+					result.FinishedAt = time.Now()
+					result.Duration = result.FinishedAt.Sub(startTime)
+					return result
+				}
+			}
+		}
+	}
+
+	for _, idx := range plan.OrderedIndices {
+		req := cfg.Collection.Requests[idx]
 		result.SelectedCount++
-		reqResult := executeRequest(client, idx, req, cfg.Environment, cfg.FailIfNoTests)
+		reqResult := executeRequest(client, idx, req, cfg.Environment, cfg.FailIfNoTests, cfg)
 		result.RequestResults = append(result.RequestResults, reqResult)
 
 		if reqResult.Passed {
@@ -124,19 +175,44 @@ func Execute(cfg *Config) *Result {
 		}
 	}
 
+	for _, ref := range cfg.Collection.Hooks.Teardown {
+		_, req, err := ResolveRequestRef(cfg.Collection, ref)
+		if err != nil {
+			result.RequestResults = append(result.RequestResults, RequestResult{
+				RequestRef: ref,
+				Name:       "teardown",
+				Skipped:    true,
+				SkipReason: err.Error(),
+			})
+			result.FailedCount++
+			continue
+		}
+		hookResult := executeRequest(client, -1, req, cfg.Environment, cfg.FailIfNoTests, cfg)
+		hookResult.RequestRef = ref
+		hookResult.Name = "[teardown] " + req.Name
+		result.RequestResults = append(result.RequestResults, hookResult)
+		if !hookResult.Passed {
+			result.FailedCount++
+			result.FailureSummary = append(result.FailureSummary, hookResult.Name)
+		}
+	}
+
 	result.FinishedAt = time.Now()
 	result.Duration = result.FinishedAt.Sub(startTime)
 	return result
 }
 
 func hasActiveFilters(filter RequestFilter) bool {
-	return len(filter.Refs) > 0 || len(filter.ExactNames) > 0 || len(filter.NameContains) > 0 || len(filter.Methods) > 0
+	return len(filter.Refs) > 0 || len(filter.ExactNames) > 0 || len(filter.NameContains) > 0 || len(filter.Methods) > 0 || len(filter.Tags) > 0
 }
 
 // requestMatches applies all active filters in a single pass to keep large runs cheap.
-func requestMatches(req *model.Request, idx int, filter RequestFilter) bool {
+func requestMatches(req *model.Request, idx int, filter RequestFilter, collectionTags []string) bool {
 	if req == nil {
 		return false
+	}
+	if !hasActiveFilters(filter) {
+		return true
 	}
 	if len(filter.Refs) > 0 {
 		match := false
@@ -187,12 +263,31 @@ func requestMatches(req *model.Request, idx int, filter RequestFilter) bool {
 			return false
 		}
 	}
+	if len(filter.Tags) > 0 {
+		allTags := append([]string(nil), collectionTags...)
+		allTags = append(allTags, req.Tags...)
+		match := false
+		for _, filterTag := range filter.Tags {
+			for _, tag := range allTags {
+				if strings.EqualFold(filterTag, tag) {
+					match = true
+					break
+				}
+			}
+			if match {
+				break
+			}
+		}
+		if !match {
+			return false
+		}
+	}
 	return true
 }
 
 // executeRequest resolves variables, executes the request, evaluates assertions,
 // and pushes extractor output back into the shared runtime environment.
-func executeRequest(client *http.Client, idx int, req *model.Request, env *model.ResolvedEnvironment, failIfNoTests bool) RequestResult {
+func executeRequest(client *http.Client, idx int, req *model.Request, env *model.ResolvedEnvironment, failIfNoTests bool, cfg *Config) RequestResult {
 	secrets := secretValues(env)
 	result := RequestResult{
 		RequestRef:     fmt.Sprintf("%d", idx),
@@ -209,53 +304,100 @@ func executeRequest(client *http.Client, idx int, req *model.Request, env *model
 		result.URL = util.RedactWithSecrets(processedReq.URL, secrets)
 	}
 
-	resp, err := client.Execute(processedReq)
-	if err != nil {
-		result.ErrorMessage = util.RedactWithSecrets(err.Error(), secrets)
-		result.ErrorCategory = "transport"
-		result.Passed = false
-		return result
+	attempts := 1
+	if cfg != nil && cfg.FlakyRetries > 0 {
+		attempts += cfg.FlakyRetries
 	}
 
-	result.StatusCode = resp.StatusCode
-	result.Duration = resp.Duration
-	result.Passed = true
-
-	if len(req.Assertions) == 0 {
-		result.Warnings = append(result.Warnings, "request has no assertions")
-		if failIfNoTests {
+	for attempt := 0; attempt < attempts; attempt++ {
+		resp, err := client.Execute(processedReq)
+		if err != nil {
+			result.ErrorMessage = util.RedactWithSecrets(err.Error(), secrets)
+			result.ErrorCategory = "transport"
 			result.Passed = false
-			result.ErrorCategory = "no_assertions"
-			result.ErrorMessage = "request has no assertions"
+			result.RetriesUsed = attempt
+			continue
 		}
-	}
 
-	for _, assertion := range req.Assertions {
-		assertResult := model.ValidateAssertion(assertion, resp)
-		result.Assertions = append(result.Assertions, AssertionResult{
-			Type:    string(assertion.Type),
-			Passed:  assertResult.Passed,
-			Message: util.RedactWithSecrets(assertResult.Message, secrets),
-		})
-		if !assertResult.Passed {
-			result.Passed = false
-			result.ErrorCategory = "assertion"
-		}
-	}
+		result.StatusCode = resp.StatusCode
+		result.Duration = resp.Duration
+		result.Passed = true
+		result.Assertions = result.Assertions[:0]
 
-	if env != nil {
-		wrappedEnv := &model.Environment{Variables: toEnvironmentVariables(env.Variables)}
-		for _, extractor := range req.Extractors {
-			if err := model.ExtractValue(extractor, resp, wrappedEnv); err == nil {
-				result.ExtractedKeys = append(result.ExtractedKeys, extractor.Target)
+		combinedAssertions := append([]model.Assertion(nil), req.Assertions...)
+		for _, contractName := range cfg.Contracts {
+			for _, contract := range cfg.Collection.Contracts {
+				if contract.Name == contractName {
+					combinedAssertions = append(combinedAssertions, contract.Assertions...)
+				}
 			}
 		}
-		for key, variable := range wrappedEnv.Variables {
-			env.Variables[key] = variable.Value
+
+		if len(combinedAssertions) == 0 {
+			result.Warnings = append(result.Warnings, "request has no assertions")
+			if failIfNoTests {
+				result.Passed = false
+				result.ErrorCategory = "no_assertions"
+				result.ErrorMessage = "request has no assertions"
+			}
+		}
+
+		for _, assertion := range combinedAssertions {
+			assertResult := model.ValidateAssertion(assertion, resp)
+			result.Assertions = append(result.Assertions, AssertionResult{
+				Type:    string(assertion.Type),
+				Passed:  assertResult.Passed,
+				Message: util.RedactWithSecrets(assertResult.Message, secrets),
+			})
+			if !assertResult.Passed {
+				result.Passed = false
+				result.ErrorCategory = "assertion"
+				result.ErrorMessage = assertResult.Message
+			}
+		}
+
+		if snapshotEnabled(req, cfg) {
+			snapshotResult := applySnapshot(cfg.Collection.ID, req, resp, cfg)
+			result.Assertions = append(result.Assertions, snapshotResult)
+			if !snapshotResult.Passed {
+				result.Passed = false
+				result.ErrorCategory = "snapshot"
+				result.ErrorMessage = snapshotResult.Message
+			}
+		}
+
+		if env != nil {
+			wrappedEnv := &model.Environment{Variables: toEnvironmentVariables(env.Variables)}
+			for _, extractor := range req.Extractors {
+				if err := model.ExtractValue(extractor, resp, wrappedEnv); err == nil {
+					result.ExtractedKeys = append(result.ExtractedKeys, extractor.Target)
+				}
+			}
+			for key, variable := range wrappedEnv.Variables {
+				env.Variables[key] = variable.Value
+			}
+		}
+
+		result.RetriesUsed = attempt
+		if attempt > 0 && result.Passed {
+			result.FlakyRecovered = true
+			result.Warnings = append(result.Warnings, fmt.Sprintf("request recovered after %d retry", attempt))
+		}
+		if result.Passed {
+			break
 		}
 	}
 
 	return result
+}
+
+func containsIndex(items []int, target int) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 // toEnvironmentVariables adapts resolved runtime values back into the model shape

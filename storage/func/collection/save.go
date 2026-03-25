@@ -14,27 +14,33 @@ func Save(basePath string, col *model.Collection) error {
 		return errors.New("collection is nil")
 	}
 
+	model.NormalizeCollection(col)
+
 	if !validIDPattern.MatchString(col.ID) {
 		return errors.New("invalid collection ID format")
 	}
 
-	if err := storagefunc.EnsureDir(filepath.Join(basePath, "collections")); err != nil {
+	if err := storagefunc.EnsureBaseDirs(basePath); err != nil {
 		return err
 	}
 
 	path := filepath.Join(basePath, "collections", col.ID+".json")
+	expectedDir := filepath.Join(basePath, "collections")
+	if resolvedExpectedDir, resolveErr := filepath.EvalSymlinks(expectedDir); resolveErr == nil {
+		expectedDir = resolvedExpectedDir
+	}
 
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		resolvedPath = path
+		resolvedPath = filepath.Join(expectedDir, filepath.Base(path))
 	}
 
-	expectedDir := filepath.Join(basePath, "collections")
 	if !isPathContained(resolvedPath, expectedDir) {
 		return errors.New("path traversal detected")
 	}
 
 	tempPath := resolvedPath + ".tmp"
+	col.Touch()
 	data, err := json.MarshalIndent(col, "", "  ")
 	if err != nil {
 		return err
@@ -45,5 +51,9 @@ func Save(basePath string, col *model.Collection) error {
 		return err
 	}
 
-	return os.Rename(tempPath, resolvedPath)
+	if err := os.Rename(tempPath, resolvedPath); err != nil {
+		return err
+	}
+
+	return writeRevision(basePath, col)
 }

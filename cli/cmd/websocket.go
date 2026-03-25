@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"raco/protocol"
+	"raco/util"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ func RunWebSocket(ctx *Context, args []string) int {
 	fs := flag.NewFlagSet("websocket", flag.ContinueOnError)
 	url := fs.String("r", "", "WebSocket URL (ws:// or wss://)")
 	headers := fs.String("H", "", "Headers (Key:Value, multiple separated by ;)")
+	scriptPath := fs.String("script", "", "Protocol script path")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -29,8 +31,8 @@ func RunWebSocket(ctx *Context, args []string) int {
 		return 1
 	}
 
-	if !strings.HasPrefix(*url, "ws://") && !strings.HasPrefix(*url, "wss://") {
-		fmt.Fprintln(os.Stderr, "Error: URL must start with ws:// or wss://")
+	if !util.ValidateWebSocketURL(*url) {
+		fmt.Fprintln(os.Stderr, "Error: invalid WebSocket URL")
 		return 1
 	}
 
@@ -49,6 +51,14 @@ func RunWebSocket(ctx *Context, args []string) int {
 		return 1
 	}
 	defer client.Close()
+
+	if *scriptPath != "" {
+		if err := runProtocolScript(client, *scriptPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Script failed: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 
 	fmt.Printf("Connected to %s\n", *url)
 	fmt.Println("Type messages and press Enter to send. Ctrl+C to exit.")
@@ -121,6 +131,7 @@ func printWebSocketUsage() {
 Options:
   -r <url>   WebSocket URL (ws:// or wss://) (required)
   -H <hdr>   Headers (Key:Value, multiple separated by ;)
+  --script   Run protocol script and exit
 
 Examples:
   raco ws -r wss://echo.websocket.org

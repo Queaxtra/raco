@@ -18,13 +18,16 @@ func Load(basePath string, id string) (*model.Collection, error) {
 	}
 
 	path := filepath.Join(basePath, "collections", id+".json")
+	expectedDir := filepath.Join(basePath, "collections")
+	if resolvedExpectedDir, resolveErr := filepath.EvalSymlinks(expectedDir); resolveErr == nil {
+		expectedDir = resolvedExpectedDir
+	}
 
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		resolvedPath = path
+		resolvedPath = filepath.Join(expectedDir, filepath.Base(path))
 	}
 
-	expectedDir := filepath.Join(basePath, "collections")
 	if !isPathContained(resolvedPath, expectedDir) {
 		return nil, errors.New("path traversal detected")
 	}
@@ -39,6 +42,7 @@ func Load(basePath string, id string) (*model.Collection, error) {
 		return nil, err
 	}
 
+	model.NormalizeCollection(&col)
 	return &col, nil
 }
 

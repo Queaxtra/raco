@@ -20,11 +20,9 @@ func Save(basePath string, env *model.Environment) error {
 		return errors.New("invalid environment name format")
 	}
 
-	if env.Variables == nil {
-		env.Variables = make(map[string]model.EnvironmentVariable)
-	}
+	model.NormalizeEnvironment(env)
 
-	if err := storagefunc.EnsureDir(filepath.Join(basePath, "environments")); err != nil {
+	if err := storagefunc.EnsureBaseDirs(basePath); err != nil {
 		return err
 	}
 

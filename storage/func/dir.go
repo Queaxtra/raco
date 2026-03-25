@@ -6,9 +6,17 @@ import (
 )
 
 func EnsureDir(basePath string) error {
+	return EnsureBaseDirs(basePath)
+}
+
+func EnsureBaseDirs(basePath string) error {
 	dirs := []string{
 		filepath.Join(basePath, "collections"),
 		filepath.Join(basePath, "environments"),
+		filepath.Join(basePath, "history"),
+		filepath.Join(basePath, "snapshots"),
+		filepath.Join(basePath, "cookies"),
+		filepath.Join(basePath, "scripts"),
 	}
 
 	for _, dir := range dirs {

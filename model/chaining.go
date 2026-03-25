@@ -12,6 +12,10 @@ const (
 	ExtractJSONPath ExtractionType = "jsonpath"
 	ExtractRegex    ExtractionType = "regex"
 	ExtractHeader   ExtractionType = "header"
+	ExtractCookie   ExtractionType = "cookie"
+	ExtractStatus   ExtractionType = "status"
+	ExtractBody     ExtractionType = "body"
+	ExtractRegexKey ExtractionType = "regex_named"
 )
 
 type Extractor struct {
@@ -49,6 +53,24 @@ func ExtractValue(extractor Extractor, response *Response, env *Environment) err
 
 	if extractor.Type == ExtractHeader {
 		value, err = extractFromHeader(response.Headers, extractor.Source)
+		if err != nil {
+			return err
+		}
+	}
+	if extractor.Type == ExtractCookie {
+		value, err = extractFromCookie(response.Headers, extractor.Source)
+		if err != nil {
+			return err
+		}
+	}
+	if extractor.Type == ExtractStatus {
+		value = fmt.Sprintf("%d", response.StatusCode)
+	}
+	if extractor.Type == ExtractBody {
+		value = response.Body
+	}
+	if extractor.Type == ExtractRegexKey {
+		value, err = extractFromNamedRegex(response.Body, extractor.Pattern, extractor.Source)
 		if err != nil {
 			return err
 		}
@@ -131,4 +153,47 @@ func extractFromHeader(headers map[string]string, key string) (string, error) {
 	}
 
 	return value, nil
+}
+
+func extractFromCookie(headers map[string]string, key string) (string, error) {
+	headerValue, err := extractFromHeader(headers, "Set-Cookie")
+	if err != nil {
+		return "", err
+	}
+	pairs := regexp.MustCompile(`;\s*`).Split(headerValue, -1)
+	for _, pair := range pairs {
+		nameValue := regexp.MustCompile(`=`).Split(pair, 2)
+		if len(nameValue) != 2 {
+			continue
+		}
+		if nameValue[0] == key {
+			return nameValue[1], nil
+		}
+	}
+	return "", fmt.Errorf("cookie not found: %s", key)
+}
+
+func extractFromNamedRegex(body string, pattern string, name string) (string, error) {
+	if body == "" {
+		return "", fmt.Errorf("body is empty")
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid regex: %w", err)
+	}
+	match := re.FindStringSubmatch(body)
+	if len(match) == 0 {
+		return "", fmt.Errorf("no match found")
+	}
+	index := -1
+	for idx, item := range re.SubexpNames() {
+		if item == name {
+			index = idx
+			break
+		}
+	}
+	if index == -1 || index >= len(match) {
+		return "", fmt.Errorf("named group not found: %s", name)
+	}
+	return match[index], nil
 }

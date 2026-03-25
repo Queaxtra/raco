@@ -34,6 +34,10 @@ func (c *Collector) GetStats() Stats {
 		AverageDuration: raw.AverageDuration,
 		MinDuration:     raw.MinDuration,
 		MaxDuration:     raw.MaxDuration,
+		P50Duration:     raw.P50Duration,
+		P95Duration:     raw.P95Duration,
+		P99Duration:     raw.P99Duration,
+		ProtocolCounts:  raw.ProtocolCounts,
 		LastUpdated:     raw.LastUpdated,
 	}
 }

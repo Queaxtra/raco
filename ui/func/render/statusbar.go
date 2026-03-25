@@ -16,6 +16,7 @@ func StatusBar(width int, mode string) string {
 
 	hints := []struct{ key, desc string }{
 		{"j/k", "nav"},
+		{"^u/^d", "page"},
 		{"gg/G", "top/bot"},
 		{"h/l", "focus"},
 		{"e", "send"},

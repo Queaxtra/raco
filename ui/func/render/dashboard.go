@@ -44,8 +44,12 @@ type DashboardStats struct {
 	AvgDuration     string
 	MinDuration     string
 	MaxDuration     string
+	P50Duration     string
+	P95Duration     string
+	P99Duration     string
 	Sparkline       string
 	SuccessRateBar  string
+	ProtocolSummary string
 }
 
 func Dashboard(width, height int, stats DashboardStats) string {
@@ -78,6 +82,21 @@ func Dashboard(width, height int, stats DashboardStats) string {
 	content.WriteString(dashboardValueStyle.Render(stats.MinDuration))
 	content.WriteString(dashboardLabelStyle.Render(" | Max: "))
 	content.WriteString(dashboardValueStyle.Render(stats.MaxDuration))
+	content.WriteString("\n\n")
+
+	content.WriteString(dashboardLabelStyle.Render("Percentiles"))
+	content.WriteString("\n")
+	content.WriteString(dashboardLabelStyle.Render("  P50: "))
+	content.WriteString(dashboardValueStyle.Render(stats.P50Duration))
+	content.WriteString(dashboardLabelStyle.Render(" | P95: "))
+	content.WriteString(dashboardValueStyle.Render(stats.P95Duration))
+	content.WriteString(dashboardLabelStyle.Render(" | P99: "))
+	content.WriteString(dashboardValueStyle.Render(stats.P99Duration))
+	content.WriteString("\n\n")
+
+	content.WriteString(dashboardLabelStyle.Render("Protocols"))
+	content.WriteString("\n")
+	content.WriteString(stats.ProtocolSummary)
 	content.WriteString("\n\n")
 
 	content.WriteString(dashboardLabelStyle.Render("Response Time Trend"))

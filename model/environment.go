@@ -20,6 +20,7 @@ func (v EnvironmentVariable) IsSecret() bool {
 
 type Environment struct {
 	Name      string                         `json:"name" yaml:"name"`
+	Parent    string                         `json:"parent,omitempty" yaml:"parent,omitempty"`
 	Variables map[string]EnvironmentVariable `json:"variables" yaml:"variables"`
 }
 

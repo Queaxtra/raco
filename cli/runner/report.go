@@ -36,6 +36,10 @@ func WriteReport(result *Result, path string, format string) error {
 		return encoder.Encode(result)
 	case "junit":
 		return writeJUnit(writer, result)
+	case "markdown", "github":
+		return writeMarkdown(writer, result)
+	case "sarif":
+		return writeSARIF(writer, result)
 	default:
 		var buf bytes.Buffer
 		PrintResultTo(&buf, result, "text")
@@ -44,6 +48,94 @@ func WriteReport(result *Result, path string, format string) error {
 	}
 }
 
+// writeMarkdown produces the same data summary as the text renderer but in a
+// layout that works well in CI summaries and code review comments.
+func writeMarkdown(writer *bufio.Writer, result *Result) error {
+	if _, err := fmt.Fprintf(writer, "# Collection Run\n\n- Collection: %s\n- Environment: %s\n- Passed: %d\n- Failed: %d\n- Skipped: %d\n\n", result.CollectionName, result.EnvironmentName, result.PassedCount, result.FailedCount, result.SkippedCount); err != nil {
+		return err
+	}
+	if _, err := writer.WriteString("| Status | Method | Name | Duration |\n|---|---|---|---|\n"); err != nil {
+		return err
+	}
+	for _, req := range result.RequestResults {
+		status := "PASS"
+		if req.Skipped {
+			status = "SKIP"
+		}
+		if !req.Passed && !req.Skipped {
+			status = "FAIL"
+		}
+		if _, err := fmt.Fprintf(writer, "| %s | %s | %s | %dms |\n", status, req.Method, req.Name, req.Duration.Milliseconds()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type sarifReport struct {
+	Version string     `json:"version"`
+	Schema  string     `json:"$schema"`
+	Runs    []sarifRun `json:"runs"`
+}
+
+type sarifRun struct {
+	Tool    sarifTool     `json:"tool"`
+	Results []sarifResult `json:"results"`
+}
+
+type sarifTool struct {
+	Driver sarifDriver `json:"driver"`
+}
+
+type sarifDriver struct {
+	Name string `json:"name"`
+}
+
+type sarifResult struct {
+	RuleID  string            `json:"ruleId"`
+	Level   string            `json:"level"`
+	Message sarifResultText   `json:"message"`
+	Props   map[string]string `json:"properties,omitempty"`
+}
+
+type sarifResultText struct {
+	Text string `json:"text"`
+}
+
+func writeSARIF(writer *bufio.Writer, result *Result) error {
+	report := sarifReport{
+		Version: "2.1.0",
+		Schema:  "https://json.schemastore.org/sarif-2.1.0.json",
+		Runs: []sarifRun{
+			{
+				Tool:    sarifTool{Driver: sarifDriver{Name: "raco"}},
+				Results: make([]sarifResult, 0),
+			},
+		},
+	}
+	for _, req := range result.RequestResults {
+		if req.Passed || req.Skipped {
+			continue
+		}
+		report.Runs[0].Results = append(report.Runs[0].Results, sarifResult{
+			RuleID: req.ErrorCategory,
+			Level:  "error",
+			Message: sarifResultText{
+				Text: req.Name + ": " + req.ErrorMessage,
+			},
+			Props: map[string]string{
+				"method": req.Method,
+				"url":    req.URL,
+			},
+		})
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(report)
+}
+
+// resolveReportPath keeps report output inside the current workspace so CI jobs
+// cannot be tricked into overwriting unrelated files.
 func resolveReportPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("report path is required")
@@ -71,6 +163,8 @@ func resolveReportPath(path string) (string, error) {
 	return resolvedPath, nil
 }
 
+// resolveReportTarget canonicalizes the deepest existing parent before the file
+// is created, which makes symlink escapes visible during validation.
 func resolveReportTarget(base string, relative string) (string, error) {
 	target := filepath.Join(base, relative)
 	dir := filepath.Dir(target)
@@ -82,26 +176,7 @@ func resolveReportTarget(base string, relative string) (string, error) {
 }
 
 func resolveExistingDir(dir string) (string, error) {
-	current := dir
-	visited := make([]string, 0, 4)
-	for {
-		visited = append(visited, current)
-		if info, err := os.Stat(current); err == nil && info.IsDir() {
-			resolved, err := filepath.EvalSymlinks(current)
-			if err != nil {
-				return "", err
-			}
-			for i := len(visited) - 2; i >= 0; i-- {
-				resolved = filepath.Join(resolved, filepath.Base(visited[i]))
-			}
-			return resolved, nil
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("report path base not found")
-		}
-		current = parent
-	}
+	return util.ResolveExistingDir(dir)
 }
 
 // junitSuite models the subset of JUnit XML we need for collection run reporting.
@@ -138,6 +213,8 @@ func writeJUnit(writer *bufio.Writer, result *Result) error {
 		Cases: make([]junitCase, 0, len(result.RequestResults)),
 	}
 	for _, req := range result.RequestResults {
+		// Filter-skipped requests are omitted so JUnit totals describe the executed
+		// suite rather than the user's broader collection inventory.
 		if req.Skipped && req.SkipReason == "filtered out" {
 			continue
 		}
